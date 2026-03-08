@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   build-and-push:
+    if: github.repository == 'caiwuu/web2api'
     runs-on: ubuntu-latest
 
     steps:
