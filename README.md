@@ -12,14 +12,14 @@ Web2API 是一个**桥接服务**：把网页端的 AI 服务（当前主要是 
 - 支持 OpenAI / Anthropic 双协议（/v1/chat/completions、/v1/messages 等）
 - 提供可视化配置页（代理组、账号池、指纹、时区等）
 
-## 代理与账号准备
+## 代理与账号准备（个人推荐）
 
-- **家宽代理获取地址**：使用 Cliproxy，进入后选择「流量代理 - 账密模式」，会话类型选择 **Sticky IP**  
+- **家宽代理获取地址**：使用 Cliproxy，进入后选择「流量代理 - 账密模式」，会话类型选择 **Sticky IP** (IP 纯净度没问题的可以使用自己的 IP)
   链接：[`Cliproxy`](https://share.cliproxy.com/share/ftdzwxt2n)
 - **IP 纯度检测**：用于检测当前出口 IP 纯度与归属地  
   链接：[`https://ping0.cc/ip/`](https://ping0.cc/ip/)
 - **Claude 普号获取**：可以自己注册，也可以购买成品号  
-  商品示例：[`https://aizhp.site/item/12`](https://aizhp.site/item/12)
+  成品号：[`https://aizhp.site/item/12`](https://aizhp.site/item/12)
 
 ## 快速开始
 

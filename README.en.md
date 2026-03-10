@@ -44,12 +44,12 @@ If you only want to “try Claude’s web UI”, this project is **not** for you
 
 ## Preparing proxies and accounts
 
-- **Residential proxy provider**: use Cliproxy. After opening the link, choose the _traffic‑based_ plan with _user/pass auth_, and set session type to **Sticky IP**.  
-  Link: [`https://share.cliproxy.com/share/ftdzwxt2n`](https://share.cliproxy.com/share/ftdzwxt2n)
+- **Residential proxy provider**: use Cliproxy. After opening the link, choose the _traffic‑based_ plan with _user/pass auth_, and set session type to **Sticky IP** (if your IP is already clean enough, you can use your own IP).  
+  Link: [`Cliproxy`](https://share.cliproxy.com/share/ftdzwxt2n)
 - **IP purity check**: check your current exit IP’s “cleanliness” and location.  
   Link: [`https://ping0.cc/ip/`](https://ping0.cc/ip/)
 - **Claude “normal” accounts**: you can register yourself, or buy ready‑made accounts if you prefer.  
-  Example product: [`https://aizhp.site/item/12`](https://aizhp.site/item/12)
+  Ready‑made accounts: [`https://aizhp.site/item/12`](https://aizhp.site/item/12)
 
 ## Quick start
 
