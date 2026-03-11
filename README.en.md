@@ -60,21 +60,12 @@ If you only want to “try Claude’s web UI”, this project is **not** for you
 
 ### Docker
 
-**Build from source:**
-
-```bash
-git clone https://github.com/caiwuu/web2api.git
-cd web2api
-# edit config.yaml
-docker compose up -d --build
-```
-
-**Or pull the image directly:**
-
 ```bash
 mkdir web2api && cd web2api
 mkdir -p docker-data && curl -sL -o docker-data/config.yaml https://raw.githubusercontent.com/caiwuu/web2api/master/docker/config.container.yaml
+
 # edit docker-data/config.yaml
+
 docker run -d --name web2api --restart unless-stopped --shm-size=1g \
   -p 9000:9000 -v "$(pwd)/docker-data:/data" ghcr.io/caiwuu/web2api:latest
 ```

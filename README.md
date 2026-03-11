@@ -30,21 +30,12 @@ Web2API 是一个**桥接服务**：把网页端的 AI 服务（当前主要是 
 
 ### Docker
 
-**从源码构建：**
-
-```bash
-git clone https://github.com/caiwuu/web2api.git
-cd web2api
-# 修改 config.yaml
-docker compose up -d --build
-```
-
-**或直接拉取镜像：**
-
 ```bash
 mkdir web2api && cd web2api
 mkdir -p docker-data && curl -sL -o docker-data/config.yaml https://raw.githubusercontent.com/caiwuu/web2api/master/docker/config.container.yaml
-# 修改 docker-data/config.yaml
+
+# 记得修改 docker-data/config.yaml
+
 docker run -d --name web2api --restart unless-stopped --shm-size=1g \
   -p 9000:9000 -v "$(pwd)/docker-data:/data" ghcr.io/caiwuu/web2api:latest
 ```
