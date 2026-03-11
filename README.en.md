@@ -19,6 +19,11 @@ Legacy routes are also supported: `POST /claude/v1/chat/completions`, `GET /clau
 - Dual protocol support: OpenAI / Anthropic (`/v1/chat/completions`, `/v1/messages`, etc.)
 - Visual config UI for proxy groups, account pool, fingerprint, timezone, etc.
 
+![alt text](assets/README/image.png)
+![alt text](assets/README/image-2.png)
+![alt text](assets/README/image-1.png)
+![alt text](assets/README/image-3.png)
+
 ## How it works (high level)
 
 1. Start a real browser and open the site using your proxy and login state.

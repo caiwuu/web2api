@@ -12,6 +12,11 @@ Web2API 是一个**桥接服务**：把网页端的 AI 服务（当前主要是 
 - 支持 OpenAI / Anthropic 双协议（/v1/chat/completions、/v1/messages 等）
 - 提供可视化配置页（代理组、账号池、指纹、时区等）
 
+![alt text](assets/README/image.png)
+![alt text](assets/README/image-2.png)
+![alt text](assets/README/image-1.png)
+![alt text](assets/README/image-3.png)
+
 ## 代理与账号准备（个人推荐）
 
 - **家宽代理获取地址**：使用 Cliproxy，进入后选择「流量代理 - 账密模式」，会话类型选择 **Sticky IP** (IP 纯净度没问题的可以使用自己的 IP)
