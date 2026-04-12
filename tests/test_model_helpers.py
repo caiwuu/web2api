@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from core.api.protocol_models import (
+from core.http.model_helpers import (
     UNKNOWN_MODEL_CREATED_AT,
     ensure_provider_model,
     format_anthropic_model_response,
@@ -21,17 +21,17 @@ class _FakePlugin:
         return self._mapping
 
 
-class TestProtocolModels(unittest.TestCase):
+class TestModelHelpers(unittest.TestCase):
     def test_list_provider_model_ids(self) -> None:
         with patch(
-            "core.api.protocol_models.PluginRegistry.get",
+            "core.http.model_helpers.PluginRegistry.get",
             return_value=_FakePlugin({"claude-sonnet": "site-model"}),
         ):
             self.assertEqual(list_provider_model_ids("claude"), ["claude-sonnet"])
 
     def test_list_provider_model_ids_requires_mapping(self) -> None:
         with patch(
-            "core.api.protocol_models.PluginRegistry.get",
+            "core.http.model_helpers.PluginRegistry.get",
             return_value=_FakePlugin(None),
         ):
             with self.assertRaises(HTTPException) as ctx:
@@ -41,7 +41,7 @@ class TestProtocolModels(unittest.TestCase):
 
     def test_ensure_provider_model_raises_404(self) -> None:
         with patch(
-            "core.api.protocol_models.PluginRegistry.get",
+            "core.http.model_helpers.PluginRegistry.get",
             return_value=_FakePlugin({"claude-sonnet": "site-model"}),
         ):
             with self.assertRaises(HTTPException) as ctx:

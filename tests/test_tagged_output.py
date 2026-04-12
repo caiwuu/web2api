@@ -1,7 +1,9 @@
 import unittest
 
-from core.api.tagged_output import TaggedOutputError, parse_tagged_output
-from core.api.tagged_stream_parser import TaggedStreamParser
+from core.shared.tool_calls import format_tools_for_prompt
+from core.shared.tagged_output import TaggedOutputError, parse_tagged_output
+from core.shared.tagged_output import format_tagged_prompt
+from core.shared.tagged_stream_parser import TaggedStreamParser
 
 
 class TestTaggedOutput(unittest.TestCase):
@@ -44,6 +46,49 @@ class TestTaggedOutput(unittest.TestCase):
     def test_rejects_text_outside_tags(self) -> None:
         with self.assertRaises(TaggedOutputError):
             parse_tagged_output("prefix <final_answer>Hello world</final_answer>")
+
+    def test_format_tagged_prompt_supports_tool_choice(self) -> None:
+        prompt = format_tagged_prompt(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Read",
+                        "description": "Read a file",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                        },
+                    },
+                }
+            ],
+            tool_choice="none",
+        )
+
+        self.assertIn("Tool choice for this response is fixed to none.", prompt)
+        self.assertIn("Your terminal block must be <final_answer>.", prompt)
+        self.assertNotIn("## Available tools", prompt)
+
+    def test_format_tools_for_prompt_handles_null_properties(self) -> None:
+        rendered = format_tools_for_prompt(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "NoProps",
+                        "description": "Tool with null properties",
+                        "parameters": {
+                            "type": "object",
+                            "properties": None,
+                            "required": [],
+                        },
+                    },
+                }
+            ]
+        )
+        self.assertIn("NoProps():", rendered)
+        self.assertIn("Tool with null properties", rendered)
 
     def test_parse_multiple_thinks_and_ignore_trailing_content(self) -> None:
         parsed = parse_tagged_output(

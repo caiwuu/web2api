@@ -1,17 +1,17 @@
 import json
 import unittest
 
-from core.api.schemas import extract_user_content
+from core.chat.prompt_builder import extract_user_content
 from core.protocol.anthropic import AnthropicProtocolAdapter
 from core.protocol.openai import OpenAIProtocolAdapter
-from core.protocol.service import CanonicalChatService
 
 
 class TestProtocolToolHistory(unittest.IsolatedAsyncioTestCase):
-    async def test_openai_round_trips_assistant_tool_calls_and_tool_call_id(self) -> None:
+    async def test_openai_round_trips_assistant_tool_calls_and_tool_call_id(
+        self,
+    ) -> None:
         adapter = OpenAIProtocolAdapter()
-        canonical = adapter.parse_request(
-            "claude",
+        openai_req = await adapter.parse_request(
             {
                 "model": "test-model",
                 "messages": [
@@ -41,14 +41,13 @@ class TestProtocolToolHistory(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        service = CanonicalChatService(None)  # type: ignore[arg-type]
-        openai_req = await service._to_openai_request(canonical)
-
         assistant_msg = openai_req.messages[1]
         tool_msg = openai_req.messages[2]
-        self.assertEqual(assistant_msg.tool_calls[0]["id"], "call_123")
+        assert assistant_msg.tool_calls is not None
+        tc0 = assistant_msg.tool_calls[0]
+        self.assertEqual(tc0["id"], "call_123")
         self.assertEqual(
-            json.loads(assistant_msg.tool_calls[0]["function"]["arguments"]),
+            json.loads(tc0["function"]["arguments"]),
             {"path": "a.py"},
         )
         self.assertEqual(tool_msg.tool_call_id, "call_123")
@@ -70,8 +69,7 @@ class TestProtocolToolHistory(unittest.IsolatedAsyncioTestCase):
 
     async def test_anthropic_round_trips_tool_use_and_tool_result(self) -> None:
         adapter = AnthropicProtocolAdapter()
-        canonical = adapter.parse_request(
-            "claude",
+        openai_req = await adapter.parse_request(
             {
                 "model": "test-model",
                 "messages": [
@@ -104,15 +102,14 @@ class TestProtocolToolHistory(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        service = CanonicalChatService(None)  # type: ignore[arg-type]
-        openai_req = await service._to_openai_request(canonical)
-
         assistant_msg = openai_req.messages[1]
         tool_msg = openai_req.messages[2]
-        self.assertEqual(assistant_msg.tool_calls[0]["id"], "toolu_123")
-        self.assertEqual(assistant_msg.tool_calls[0]["function"]["name"], "Read")
+        assert assistant_msg.tool_calls is not None
+        tc0 = assistant_msg.tool_calls[0]
+        self.assertEqual(tc0["id"], "toolu_123")
+        self.assertEqual(tc0["function"]["name"], "Read")
         self.assertEqual(
-            json.loads(assistant_msg.tool_calls[0]["function"]["arguments"]),
+            json.loads(tc0["function"]["arguments"]),
             {"path": "a.py"},
         )
         self.assertEqual(tool_msg.role, "tool")

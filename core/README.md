@@ -8,7 +8,11 @@
 - **account**：`AccountPool`，按 type 轮询 `acquire(type)`。
 - **runtime**：`ProxyKey`、`SessionCache`（session_id → 定位 page/context）、`BrowserManager`（进程与 CDP、按 type 缓存 page）。
 - **plugin**：`AbstractPlugin`、`PluginRegistry`、`ClaudePlugin`（ensure_page / apply_auth / create_conversation / stream_completion）。
-- **api**：`conv_parser`（解析 `<!-- conv_uuid=xxx -->`）、OpenAI 兼容 schema、`ChatHandler` 编排、路由 `/{type}/v1/chat/completions`、`/{type}/v1/models`。
+- **chat**：`ChatHandler` 与调度/执行协作类，负责会话复用、prompt 拼装、插件调用。
+- **http**：OpenAI / Anthropic 路由、依赖与协议路由公共逻辑。
+- **admin**：配置页鉴权与配置管理路由。
+- **stream**：内部流事件模型与 SSE 编码工具。
+- **shared**：跨层共享的 OpenAI 模型、session marker、tagged 工具协议包装。
 
 ## 启动
 

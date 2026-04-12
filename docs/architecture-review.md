@@ -18,7 +18,7 @@ HTTP 请求
 
 - **协议层**：`core/protocol/` — 各协议解析/渲染 + 统一 Canonical 模型 + 桥接到内部请求。
 - **插件层**：`core/plugin/` — AbstractPlugin / BaseSitePlugin + PluginRegistry。
-- **编排层**：`core/api/chat_handler.py` — 会话解析、Tab 调度、调用插件流式补全。
+- **编排层**：`core/chat/handler.py` — 会话解析、Tab 调度、调用插件流式补全。
 
 ---
 
@@ -41,7 +41,7 @@ class CanonicalChatRequest(BaseModel):
 
 ### 2.2 内部流水线强绑定 OpenAI 形态
 
-**位置**：`core/protocol/service.py`、`core/api/chat_handler.py`
+**位置**：`core/protocol/base.py`、`core/chat/handler.py`
 
 - `CanonicalChatService` 将 **所有** Canonical 请求统一转成 `OpenAIChatRequest`，再交给 `ChatHandler.stream_completion(type_name, OpenAIChatRequest)`。
 - `ChatHandler` 和 `extract_user_content`、`format_tagged_prompt` 等全部基于 `OpenAIMessage` / `OpenAIChatRequest`。
@@ -60,7 +60,7 @@ class CanonicalChatRequest(BaseModel):
 
 ### 2.3 路由与协议适配器需手写并手动挂载
 
-**位置**：`core/app.py`、`core/api/openai_routes.py`、`core/api/anthropic_routes.py`
+**位置**：`core/app.py`、`core/http/openai_routes.py`、`core/http/anthropic_routes.py`
 
 - 每种协议：单独一个 router 文件、手动 `create_*_router()`、在 `app.py` 里 `include_router(...)`。
 - 没有“协议注册表”或“根据注册表自动挂路由”的机制。
@@ -127,7 +127,7 @@ register_claude_plugin()
 
 ### 4.1 工具协议与协议、插件解耦不足
 
-**位置**：`core/api/tagged_output.py`、`core/api/function_call.py`、`core/api/tagged_stream_parser.py`；被 OpenAI/Anthropic 适配器及 ChatHandler 共用。
+**位置**：`core/shared/tagged_output.py`、`core/shared/tool_calls.py`、`core/shared/tagged_stream_parser.py`；被 OpenAI/Anthropic 适配器及 ChatHandler 共用。
 
 - 当前工具调用统一走 tagged prompt 注入 + 解析，没有“协议原生 tool_use”或“插件自定义工具格式”的扩展点。
 
@@ -137,7 +137,7 @@ register_claude_plugin()
 
 ### 4.2 会话 ID 传递方式单一
 
-**位置**：`core/api/conv_parser.py`（零宽字符编码）、各协议适配器在响应末尾附加 marker。
+**位置**：`core/shared/session_markers.py`（零宽字符编码）、各协议适配器在响应末尾附加 marker。
 
 当前仅支持“在响应体末尾用零宽字符带 session_id”。
 

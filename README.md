@@ -129,7 +129,9 @@ uv run python main_mock.py
 
 - [main.py](main.py) / [main_mock.py](main_mock.py)：服务入口
 - [core/app.py](core/app.py)：应用组装
-- [core/api/](core/api)：OpenAI / Anthropic 兼容接口
+- [core/http/](core/http)：OpenAI / Anthropic HTTP 路由
+- [core/admin/](core/admin)：配置页与管理接口
+- [core/chat/](core/chat)：聊天编排与调度
 - [core/plugin/](core/plugin)：站点插件
 - [core/runtime/](core/runtime)：浏览器、tab、会话调度
 

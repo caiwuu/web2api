@@ -1,0 +1,96 @@
+{
+  "type": "error",
+  "error": {
+      "type": "rate_limit_error",
+      "message": "{\"type\":\"exceeded_limit\",\"resetsAt\":1775242800,\"remaining\":null,\"perModelLimit\":false,\"representativeClaim\":\"five_hour\",\"overageStatus\":null,\"overageResetsAt\":null,\"overageDisabledReason\":\"overage_not_provisioned\",\"overageInUse\":false,\"windows\":{\"5h\":{\"status\":\"exceeded_limit\",\"resets_at\":1775242800,\"utilization\":1.09,\"surpassed_threshold\":1.0},\"7d\":{\"status\":\"within_limit\",\"resets_at\":1775588400,\"utilization\":0.03}},\"debug_req_est_usage\":null,\"debug_req_actual_usage\":null}",
+      "details": {
+          "error_visibility": "user_facing"
+      }
+  },
+  "request_id": "req_011CZhFZWQ41ivzA46jWmvYR"
+}
+
+
+true
+access-control-allow-origin
+https://claude.ai
+alt-svc
+h3=":443"; ma=86400
+cf-cache-status
+DYNAMIC
+cf-ray
+9e69e009ca6fef03-LHR
+content-type 
+application/json
+date
+Fri, 03 Apr 2026 17:43:22 GMT
+request-id
+req_011CZhFZWQ41ivzA46jWmvYR
+server
+cloudflare
+strict-transport-security
+max-age=31536000; includeSubDomains; preload
+vary
+Origin, Accept-Encoding
+x-envoy-upstream-service-time
+348
+x-robots-tag
+none
+x-should-retry
+true
+:authority
+claude.ai
+:method
+POST
+:path
+/api/organizations/a5072b93-e634-4927-bbc0-684826b45f72/chat_conversations/0278c8ec-0204-496c-ab50-e0ca697d3b9a/completion
+:scheme
+https
+accept
+text/event-stream
+accept-encoding
+gzip, deflate, br, zstd
+accept-language
+zh-CN,zh;q=0.9
+anthropic-client-platform
+web_claude_ai
+anthropic-device-id
+fdf4020a-1c45-4706-aafd-6368444e19ba
+content-length
+6999
+content-type
+application/json
+cookie
+__cf_bm=liYGqmcWtJIhJCOGqB_ncHvqUUiAHupFKaFlEDg49S8-1775238184-1.0.1.1-dsv32m6H_IyqhLgfupnkL72e3bEIXZH02Neu1H89jwPUOaExtmiypVFf_1eSvpiJOsa8nc14dokAr6CjumJe0I3K8ET7yWVoVbxZs1uWiHg; _cfuvid=JLO978SvAqnNLallX7WExfF2.P0JHtoIvkSj6noUbhk-1775238184389-0.0.1.1-604800000; anthropic-device-id=fdf4020a-1c45-4706-aafd-6368444e19ba; activitySessionId=a446f343-ee7b-45a2-92c9-1e46b5ba656c; sessionKey=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; cf_clearance=KWblb4ZxjUne_aiieDH70ZzxfK8RxkUYhzwKudDKfdY-1775238186-1.2.1.1-C.PIVs0BY1DfJwb2SazFyHvuDwBRqjQQxwvp9bHL422PDXKBrC0ayiD.fGk_DZ72pep_knxrHBhe0yIDjLmF98Mh4ZiRlMDSHfuW2.I8s.443I94pTUQpsyPK6fAt.z9QbpyPOVMPZfhOFqsIrigPYfKUGZFCOf_89DHU3ozJ3ImQlHxb5fppKGA7dLlwpruofj3ljyBVimyRfxR4_xX2SOs9iTICJ0eFgTzoY9V.k2r.ZN0HWHkaBdDm.dU81mENnZ3AkN9Bp5UzXnRyuxnyey6OK3_9zoo.gARYNm9NsEehxmcNUDdPDPv3MUZxL0mW0dt94HAr3WBAZ0.VfRrfg; lastActiveOrg=a5072b93-e634-4927-bbc0-684826b45f72; user-sidebar-visible-on-load=true; __ssid=15ea32e0-ae0f-474a-afab-16601c07c2a2; routingHint=sk-ant-rh-eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJFUzI1NiIsICJraWQiOiAiN0MxcWFPRnhqdWxaUjRFQnNuNk1UeUZGNWdDV2JHbFpNVDR2RklrRFFpbyJ9.eyJzdWIiOiAiYTNkNjE2NzItM2Q0Zi00Mzg3LWI4NWYtNTU1ZTNkZDQxZTliIiwgImlhdCI6IDE3NzUyMzgxODcsICJpc3MiOiAiY2xhdWRlLWFpLXJvdXRpbmciLCAib25ib2FyZGluZ19jb21wbGV0ZSI6IHRydWUsICJwaG9uZV92ZXJpZmllZCI6IHRydWUsICJhZ2VfdmVyaWZpZWQiOiB0cnVlLCAibmFtZSI6ICJCcmFuZG9uSm9uZXMiLCAibG9jYWxlIjogImVuLVVTIn0.WWow5rqLp9wvS2nYDb4_FkDPI9yfB2FZk9QNdswouRLujP8y9dFT7z1b_A5Zphp4VvWcie7D2tBj-JUggDua7g; anthropic-consent-preferences=%7B%22analytics%22%3Atrue%2C%22marketing%22%3Atrue%7D; _fbp=fb.1.1775238190041.42548405438599010; ajs_user_id=a3d61672-3d4f-4387-b85f-555e3dd41e9b; ajs_anonymous_id=claudeai.v1.2bbb1b1b-4e8b-4f3b-bac6-bd64542363ae; intercom-device-id-lupk8zyo=06503e2f-7b79-47e8-9c80-9f8b22ab2c7b; CH-prefers-color-scheme=dark; intercom-session-lupk8zyo=SmlJQk4wOHZieUsvUG5jQmwxUWpxYkxlQ3kxS3JoUnd6NGtWemJyM0RXZFY5OWFpdUw2SXJkbndhTGc4YWtPV05BbktrTmI5RnFNSkgrS1d2cGczdzFTNTZpZ3N2VkdLUXVDN0kzTlJWZEtxNS9kN0xqSEY3ZXZjRTBjdTJYdjZvSjhtRWZhNVlPdHJOVGdmTCsreGJNeCt3c1NMbEFtRVFsalphbWNURnNKakxHTnN4YjRiSjA3UHphSE1PRVpJUG1kWHlvZ042bnl2VVFwWEhpdTQxZG45QzduRHk2VVNqUHZCTXJwS2ZpLzlEWlNaaTAvL3JOVzBYUzVEYVo1aCtMbUl1YmhVTHVaTC8rQ0hucVRmUTB3M01BbGJ6enMvUHg2RDVJVW5qU2M9LS1RTERValRKR1Y5cFA3TVNWMFVPeTF3PT0=--157fc7df281eca9d0ce3a41ed0bf8891b65804d1; _dd_s=aid=7b0e99fc-88eb-4026-b6ed-2274ecc546e0&rum=2&id=e5952cf6-6b2e-4a0f-b071-b777d74af568&created=1775238190107&expire=1775239100453
+origin
+https://claude.ai
+priority
+u=1, i
+referer
+https://claude.ai/chat/0278c8ec-0204-496c-ab50-e0ca697d3b9a
+sec-ch-ua
+"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"
+sec-ch-ua-mobile
+?0
+sec-ch-ua-platform
+"Windows"
+sec-fetch-dest
+empty
+sec-fetch-mode
+cors
+sec-fetch-site
+same-origin
+traceparent
+00-00000000000000005e0eedbfb4765041-5ff7e352adcc188e-01
+tracestate
+dd=s:1;o:rum
+user-agent
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0
+x-datadog-origin
+rum
+x-datadog-parent-id
+6915245697093343374
+x-datadog-sampling-priority
+1
+x-datadog-trace-id
+6777615896861364289

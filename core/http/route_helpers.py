@@ -1,4 +1,4 @@
-"""Shared helpers for protocol-specific chat routes."""
+"""Shared helpers for authenticated HTTP chat routes."""
 
 from __future__ import annotations
 
@@ -9,10 +9,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from core.api.auth import require_api_key
-from core.api.chat_handler import ChatHandler
+from core.admin.auth import require_api_key
+from core.chat.handler import ChatHandler
 from core.protocol.base import ProtocolAdapter
-from core.protocol.service import CanonicalChatService
 
 StreamErrorFormatter = Callable[[dict[str, Any]], str]
 
@@ -23,8 +22,8 @@ STREAMING_HEADERS = {
 }
 
 
-def create_protocol_router() -> APIRouter:
-    """Create a protocol router with API-key auth applied."""
+def create_authenticated_router() -> APIRouter:
+    """Create an API router with API-key auth applied."""
     return APIRouter(dependencies=[Depends(require_api_key)])
 
 
@@ -33,10 +32,10 @@ def format_openai_stream_error(payload: dict[str, Any]) -> str:
 
 
 def format_anthropic_stream_error(payload: dict[str, Any]) -> str:
-    return "event: error\n" f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def handle_protocol_chat_request(
+async def handle_chat_request(
     *,
     adapter: ProtocolAdapter,
     provider: str,
@@ -46,19 +45,18 @@ async def handle_protocol_chat_request(
 ) -> Any:
     raw_body = await request.json()
     try:
-        canonical_req = adapter.parse_request(provider, raw_body)
+        openai_req = await adapter.parse_request(raw_body)
     except Exception as exc:
         status, payload = adapter.render_error(exc)
         return JSONResponse(status_code=status, content=payload)
 
-    service = CanonicalChatService(handler)
-    if canonical_req.stream:
+    if openai_req.stream:
 
         async def sse_stream() -> AsyncIterator[str]:
             try:
                 async for event in adapter.render_stream(
-                    canonical_req,
-                    service.stream_raw(canonical_req),
+                    openai_req,
+                    handler.stream_openai_events(provider, openai_req),
                 ):
                     yield event
             except Exception as exc:
@@ -73,8 +71,10 @@ async def handle_protocol_chat_request(
         )
 
     try:
-        raw_events = await service.collect_raw(canonical_req)
-        return adapter.render_non_stream(canonical_req, raw_events)
+        events: list = []
+        async for ev in handler.stream_openai_events(provider, openai_req):
+            events.append(ev)
+        return adapter.render_non_stream(openai_req, events)
     except Exception as exc:
         status, payload = adapter.render_error(exc)
         return JSONResponse(status_code=status, content=payload)

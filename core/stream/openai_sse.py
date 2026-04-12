@@ -1,7 +1,7 @@
 """
 把 OpenAIStreamEvent 编码为 OpenAI ChatCompletions SSE chunk。
 
-这是 Hub 层的“协议输出工具”，用于把插件输出的结构化事件流转换为
+这是 Stream 层的“协议输出工具”，用于把插件输出的结构化事件流转换为
 OpenAI 兼容的 `data: {...}\\n\\n` 片段。
 
 当前不替换既有渲染链路，仅提供给后续协议/插件扩展使用。
@@ -14,7 +14,7 @@ import time
 import uuid as uuid_mod
 from collections.abc import AsyncIterator, Iterator
 
-from core.hub.schemas import OpenAIStreamEvent
+from core.stream.events import OpenAIStreamEvent
 
 
 def make_openai_stream_context(*, model: str) -> tuple[str, int]:

@@ -4,7 +4,7 @@ FastAPI 依赖与公共工具。
 
 from fastapi import HTTPException, Request
 
-from core.api.chat_handler import ChatHandler
+from core.chat.handler import ChatHandler
 from core.config.repository import ConfigRepository
 
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from playwright.async_api import BrowserContext, Page
 
-from core.api.schemas import InputAttachment
+from core.shared.models import InputAttachment
 from core.constants import TIMEZONE
 from core.plugin.base import BaseSitePlugin, PluginRegistry, SiteConfig
 from core.plugin.helpers import (
@@ -25,6 +25,73 @@ from core.plugin.helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+_HTTP_ERR_BODY_RE = re.compile(r"^HTTP\s+429\s+(.*)$", re.DOTALL)
+# 内嵌 JSON 字符串里常见 \"resetsAt\":epoch
+_RESETS_AT_EMBEDDED_RE = re.compile(r'\\"resetsAt\\"\s*:\s*(\d+)')
+_RESETS_AT_PLAIN_RE = re.compile(r'"resetsAt"\s*:\s*(\d+)')
+
+
+def _claude_rate_limit_reset_unix_from_error_payload(message: str) -> int | None:
+    """
+    从页面 fetch 失败信息中解析限流解冻时间（Unix 秒）。
+    形如：HTTP 429 { "type":"error", "error":{ "type":"rate_limit_error",
+    "message": "{\\\"resetsAt\\\": ...}" } } —— 以响应体为准，而非通用 Anthropic 头。
+    """
+    m = _HTTP_ERR_BODY_RE.match(message.strip())
+    if not m:
+        return None
+    body = m.group(1).strip()
+    if body.endswith("...") and len(body) > 3:
+        body_try = body[:-3].rstrip()
+    else:
+        body_try = body
+
+    inner: dict[str, Any] | None = None
+    try:
+        data = json.loads(body_try)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            raw = err.get("message")
+            if isinstance(raw, str):
+                try:
+                    inner = json.loads(raw)
+                except json.JSONDecodeError:
+                    inner = None
+            elif isinstance(raw, dict):
+                inner = raw
+
+    if isinstance(inner, dict):
+        ra = inner.get("resetsAt")
+        if isinstance(ra, int) and ra > 0:
+            return ra
+        windows = inner.get("windows")
+        if isinstance(windows, dict):
+            exceeded: list[int] = []
+            for w in windows.values():
+                if not isinstance(w, dict):
+                    continue
+                if w.get("status") != "exceeded_limit":
+                    continue
+                rw = w.get("resets_at")
+                if isinstance(rw, int) and rw > 0:
+                    exceeded.append(rw)
+            if exceeded:
+                return min(exceeded)
+
+    for rx in (_RESETS_AT_EMBEDDED_RE, _RESETS_AT_PLAIN_RE):
+        mm = rx.search(message)
+        if mm:
+            try:
+                v = int(mm.group(1))
+                if v > 0:
+                    return v
+            except ValueError:
+                pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +345,9 @@ class ClaudePlugin(BaseSitePlugin):
     ) -> int | None:
         if "429" not in message:
             return None
+        from_body = _claude_rate_limit_reset_unix_from_error_payload(message)
+        if from_body is not None:
+            return from_body
         if headers:
             reset = headers.get("anthropic-ratelimit-requests-reset") or headers.get(
                 "Anthropic-Ratelimit-Requests-Reset"

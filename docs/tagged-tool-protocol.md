@@ -337,8 +337,8 @@ Rules:
 
 当前实现已经切换为：
 
-- `core/api/tagged_output.py`：标签协议 prompt 与非流式解析
-- `core/api/tagged_stream_parser.py`：字符级标签流式解析器
+- `core/shared/tagged_output.py`：标签协议 prompt 与非流式解析
+- `core/shared/tagged_stream_parser.py`：字符级标签流式解析器
 - `core/protocol/openai.py`：消费 tagged events 并输出 OpenAI tool_calls/content
 - `core/protocol/anthropic.py`：消费 tagged events 并输出 Anthropic blocks/SSE
 

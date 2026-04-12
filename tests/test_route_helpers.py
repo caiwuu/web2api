@@ -1,17 +1,19 @@
 import unittest
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
+from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from core.api.protocol_routes import (
+from core.chat.handler import ChatHandler
+from core.http.route_helpers import (
     format_anthropic_stream_error,
     format_openai_stream_error,
-    handle_protocol_chat_request,
+    handle_chat_request,
 )
-from core.hub.schemas import OpenAIStreamEvent
 from core.protocol.base import ProtocolAdapter
-from core.protocol.schemas import CanonicalChatRequest
+from core.shared.models import OpenAIChatRequest, OpenAIMessage
+from core.stream.events import OpenAIStreamEvent
 
 
 class _FakeRequest:
@@ -43,29 +45,27 @@ class _FakeAdapter(ProtocolAdapter):
     def __init__(self, *, stream_raises: bool = False) -> None:
         self._stream_raises = stream_raises
 
-    def parse_request(
+    async def parse_request(
         self,
-        provider: str,
         raw_body: dict[str, Any],
-    ) -> CanonicalChatRequest:
-        return CanonicalChatRequest(
-            protocol="openai",
-            provider=provider,
+    ) -> OpenAIChatRequest:
+        return OpenAIChatRequest(
             model=str(raw_body.get("model") or "fake-model"),
+            messages=[OpenAIMessage(role="user", content="test")],
             stream=bool(raw_body.get("stream") or False),
         )
 
     def render_non_stream(
         self,
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         raw_events: list[OpenAIStreamEvent],
     ) -> dict[str, Any]:
         text = "".join(event.content or "" for event in raw_events)
-        return {"protocol": self.protocol_name, "provider": req.provider, "text": text}
+        return {"protocol": self.protocol_name, "provider": "demo", "text": text}
 
     async def render_stream(
         self,
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         raw_stream: AsyncIterator[OpenAIStreamEvent],
     ) -> AsyncIterator[str]:
         async for event in raw_stream:
@@ -81,22 +81,25 @@ class _FakeAdapter(ProtocolAdapter):
 async def _collect_streaming_response(response: StreamingResponse) -> str:
     parts: list[str] = []
     async for chunk in response.body_iterator:
-        parts.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+        if isinstance(chunk, str):
+            parts.append(chunk)
+        else:
+            parts.append(bytes(chunk).decode())
     return "".join(parts)
 
 
-class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
-    async def test_handle_protocol_chat_request_non_stream(self) -> None:
+class TestRouteHelpers(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_chat_request_non_stream(self) -> None:
         adapter = _FakeAdapter()
         handler = _FakeHandler(
             [OpenAIStreamEvent(type="content_delta", content="hello world")]
         )
 
-        response = await handle_protocol_chat_request(
+        response = await handle_chat_request(
             adapter=adapter,
             provider="demo",
-            request=_FakeRequest({"model": "m1", "stream": False}),
-            handler=handler,
+            request=cast(Request, _FakeRequest({"model": "m1", "stream": False})),
+            handler=cast(ChatHandler, handler),
             stream_error_formatter=format_openai_stream_error,
         )
 
@@ -106,17 +109,17 @@ class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(handler.calls, [("demo", "m1")])
 
-    async def test_handle_protocol_chat_request_openai_stream_error(self) -> None:
+    async def test_handle_chat_request_openai_stream_error(self) -> None:
         adapter = _FakeAdapter(stream_raises=True)
         handler = _FakeHandler(
             [OpenAIStreamEvent(type="content_delta", content="hello world")]
         )
 
-        response = await handle_protocol_chat_request(
+        response = await handle_chat_request(
             adapter=adapter,
             provider="demo",
-            request=_FakeRequest({"model": "m1", "stream": True}),
-            handler=handler,
+            request=cast(Request, _FakeRequest({"model": "m1", "stream": True})),
+            handler=cast(ChatHandler, handler),
             stream_error_formatter=format_openai_stream_error,
         )
 
@@ -124,17 +127,17 @@ class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
         body = await _collect_streaming_response(response)
         self.assertEqual(body, 'data: {"error": "stream failed"}\n\n')
 
-    async def test_handle_protocol_chat_request_anthropic_stream_error(self) -> None:
+    async def test_handle_chat_request_anthropic_stream_error(self) -> None:
         adapter = _FakeAdapter(stream_raises=True)
         handler = _FakeHandler(
             [OpenAIStreamEvent(type="content_delta", content="hello world")]
         )
 
-        response = await handle_protocol_chat_request(
+        response = await handle_chat_request(
             adapter=adapter,
             provider="demo",
-            request=_FakeRequest({"model": "m1", "stream": True}),
-            handler=handler,
+            request=cast(Request, _FakeRequest({"model": "m1", "stream": True})),
+            handler=cast(ChatHandler, handler),
             stream_error_formatter=format_anthropic_stream_error,
         )
 
@@ -144,21 +147,20 @@ class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
 
     async def test_parse_error_returns_json_response(self) -> None:
         class _ParseErrorAdapter(_FakeAdapter):
-            def parse_request(
+            async def parse_request(
                 self,
-                provider: str,
                 raw_body: dict[str, Any],
-            ) -> CanonicalChatRequest:
+            ) -> OpenAIChatRequest:
                 raise ValueError("bad request")
 
             def render_error(self, exc: Exception) -> tuple[int, dict[str, Any]]:
                 return 400, {"error": str(exc)}
 
-        response = await handle_protocol_chat_request(
+        response = await handle_chat_request(
             adapter=_ParseErrorAdapter(),
             provider="demo",
-            request=_FakeRequest({"stream": False}),
-            handler=_FakeHandler([]),
+            request=cast(Request, _FakeRequest({"stream": False})),
+            handler=cast(ChatHandler, _FakeHandler([])),
             stream_error_formatter=format_openai_stream_error,
         )
 

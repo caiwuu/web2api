@@ -6,31 +6,30 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
 
-from core.hub.schemas import OpenAIStreamEvent
-from core.protocol.schemas import CanonicalChatRequest
+from core.shared.models import OpenAIChatRequest
+from core.stream.events import OpenAIStreamEvent
 
 
 class ProtocolAdapter(ABC):
     protocol_name: str
 
     @abstractmethod
-    def parse_request(
+    async def parse_request(
         self,
-        provider: str,
         raw_body: dict[str, Any],
-    ) -> CanonicalChatRequest: ...
+    ) -> OpenAIChatRequest: ...
 
     @abstractmethod
     def render_non_stream(
         self,
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         raw_events: list[OpenAIStreamEvent],
     ) -> dict[str, Any]: ...
 
     @abstractmethod
     def render_stream(
         self,
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         raw_stream: AsyncIterator[OpenAIStreamEvent],
     ) -> AsyncIterator[str]: ...
 

@@ -1,8 +1,10 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.api.schemas import InputAttachment
+from playwright.async_api import BrowserContext, Page
+
 from core.plugin.claude import ClaudePlugin
+from core.shared.models import InputAttachment
 
 
 class TestClaudeImageUpload(unittest.IsolatedAsyncioTestCase):
@@ -24,16 +26,18 @@ class TestClaudeImageUpload(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         ) as mock_upload:
+            context = MagicMock(spec=BrowserContext)
+            page = MagicMock(spec=Page)
             prepared = await plugin.prepare_attachments(
-                None,
-                object(),
+                context,
+                page,
                 "conv-456",
                 state,
                 [attachment],
             )
 
         args = mock_upload.await_args
-        self.assertIsNotNone(args)
+        assert args is not None
         self.assertEqual(
             args.args[1],
             "https://claude.ai/api/organizations/org-123/conversations/conv-456/wiggle/upload-file",

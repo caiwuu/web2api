@@ -1,69 +1,12 @@
-"""OpenAI 兼容的请求/响应模型。"""
+"""Prompt 构建：从 OpenAI messages 提取对话并拼装为发给模型的文本。"""
+
+from __future__ import annotations
 
 import json
 from typing import Any
 
-from pydantic import BaseModel, Field
-
-from core.api.conv_parser import strip_session_id_suffix
-
-
-class OpenAIContentPart(BaseModel):
-    type: str
-    text: str | None = None
-    image_url: dict[str, Any] | str | None = None
-
-
-class InputAttachment(BaseModel):
-    filename: str
-    mime_type: str
-    data: bytes
-
-
-class OpenAIMessage(BaseModel):
-    role: str = Field(..., description="system | user | assistant | tool")
-    content: str | list[OpenAIContentPart] | None = ""
-    tool_calls: list[dict[str, Any]] | None = Field(
-        default=None, description="assistant 发起的工具调用"
-    )
-    tool_call_id: str | None = Field(
-        default=None, description="tool 消息对应的 call id"
-    )
-
-    model_config = {"extra": "allow"}
-
-
-class OpenAIChatRequest(BaseModel):
-    """OpenAI Chat Completions API 兼容请求体。"""
-
-    model: str = Field(default="", description="模型名，可忽略")
-    messages: list[OpenAIMessage] = Field(..., description="对话列表")
-    stream: bool = Field(default=False, description="是否流式返回")
-    tools: list[dict] | None = Field(
-        default=None,
-        description='工具列表，每项为 {"type":"function","function":{name,description,parameters,strict?}}',
-    )
-    tool_choice: str | dict | None = Field(
-        default=None,
-        description='工具选择: "auto"|"required"|"none" 或 {"type":"function","name":"xxx"}',
-    )
-    parallel_tool_calls: bool | None = Field(
-        default=None,
-        description="是否允许单次响应中并行多个 tool_call，false 时仅 0 或 1 个",
-    )
-    resume_session_id: str | None = Field(default=None, exclude=True)
-    attachment_files: list[InputAttachment] = Field(
-        default_factory=list,
-        exclude=True,
-        description="本次实际要发送给站点的附件，由 ChatHandler 根据 full_history 选择来源填充。",
-    )
-    # 仅供内部调度使用：最后一条 user 消息里的附件 & 所有 user 消息里的附件
-    attachment_files_last_user: list[InputAttachment] = Field(
-        default_factory=list, exclude=True
-    )
-    attachment_files_all_users: list[InputAttachment] = Field(
-        default_factory=list, exclude=True
-    )
+from core.shared.session_markers import strip_session_id_suffix
+from core.shared.models import OpenAIContentPart, OpenAIMessage
 
 
 def _norm_content(c: str | list[OpenAIContentPart] | None) -> str:
@@ -83,11 +26,13 @@ def _norm_content(c: str | list[OpenAIContentPart] | None) -> str:
     )
 
 
+# 追加在用户消息末尾：并行多工具时要求 `<tool_calls>` 终结块
 TAGGED_TOOL_STRICT_SUFFIX = (
     "(严格工具协议模式;如需调用工具, 只能输出 <think> 与一个终结块标签, "
     "终结块只能是 <tool_calls> 或 <final_answer>, 禁止输出标签外文本或替代方案)"
 )
 
+# 单工具调用：`parallel_tool_calls=False` 时用 `<tool_call>` 终结块
 TAGGED_TOOL_STRICT_SUFFIX_SINGLE = (
     "(严格工具协议模式;如需调用工具, 只能输出 <think> 与一个终结块标签, "
     "终结块只能是 <tool_call> 或 <final_answer>, 禁止输出标签外文本或替代方案)"
@@ -113,9 +58,9 @@ def extract_user_content(
     if not messages:
         return ""
 
-    parts: list[str] = []
+    parts: list[str] = []  # 按顺序拼接的多段文本，最后 join
 
-    # 重建会话时会把完整历史重新回放给站点，因此 tools 指令也需要重新注入。
+    # 首轮：messages 里还没有 assistant/tool，需要把完整 tagged 协议前缀插入一次
     is_first_turn = not any(m.role in ("assistant", "tool") for m in messages)
     if has_tools and tagged_prompt_prefix and (full_history or is_first_turn):
         parts.append(tagged_prompt_prefix)
@@ -123,6 +68,7 @@ def extract_user_content(
     if full_history:
         tail = messages
     else:
+        # 站点侧已有历史：只截取「当前轮」需发给模型的尾部片段
         last = messages[-1]
         if last.role == "user":
             i = len(messages) - 1
@@ -202,11 +148,7 @@ def extract_user_content(
                     elif len(call_ids) == 1:
                         label = f"**Assistant(Call ID: {call_ids[0]})**:"
                     else:
-                        label = (
-                            "**Assistant(Call IDs: "
-                            + ", ".join(call_ids)
-                            + ")**:"
-                        )
+                        label = "**Assistant(Call IDs: " + ", ".join(call_ids) + ")**:"
                     parts.append(
                         label
                         + "\n\n<tool_calls>"

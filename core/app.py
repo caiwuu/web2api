@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.account.pool import AccountPool
-from core.api.auth import (
+from core.admin.auth import (
     AdminLoginAttemptStore,
     AdminSessionStore,
     configured_api_keys,
@@ -20,14 +20,13 @@ from core.api.auth import (
     config_login_enabled,
     ensure_config_secret_hashed,
 )
-from core.api.anthropic_routes import create_anthropic_router
-from core.api.openai_routes import create_openai_router
-from core.api.config_routes import create_config_router
-
-from core.api.chat_handler import ChatHandler
+from core.chat.handler import ChatHandler
 from core.config.repository import ConfigRepository
 from core.config.settings import get, get_bool
 from core.constants import CDP_PORT_RANGE, CHROMIUM_BIN
+from core.http.anthropic_routes import create_anthropic_router
+from core.http.openai_routes import create_openai_router
+from core.admin.config_routes import create_config_router
 from core.plugin.base import PluginRegistry
 from core.plugin.claude import register_claude_plugin
 from core.runtime.browser_manager import BrowserManager

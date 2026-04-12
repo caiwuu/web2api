@@ -1,28 +1,30 @@
 import json
 import unittest
 
-from core.hub.schemas import OpenAIStreamEvent
+from core.stream.events import OpenAIStreamEvent
 from core.protocol.anthropic import AnthropicProtocolAdapter
 from core.protocol.openai import OpenAIProtocolAdapter
-from core.protocol.schemas import CanonicalChatRequest, CanonicalToolSpec
+from core.shared.models import OpenAIChatRequest, OpenAIMessage
 
 
-def _tool_request(protocol: str, *, stream: bool = False) -> CanonicalChatRequest:
-    return CanonicalChatRequest(
-        protocol=protocol,
-        provider="claude",
+def _tool_request(*, stream: bool = False) -> OpenAIChatRequest:
+    return OpenAIChatRequest(
         model="test-model",
+        messages=[OpenAIMessage(role="user", content="test")],
         stream=stream,
         tools=[
-            CanonicalToolSpec(
-                name="Read",
-                description="Read a file",
-                input_schema={
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
+            {
+                "type": "function",
+                "function": {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                    },
                 },
-            )
+            }
         ],
     )
 
@@ -41,7 +43,7 @@ async def _stream_events(chunks: list[str]):
 class TestTaggedProtocolAdapters(unittest.IsolatedAsyncioTestCase):
     def test_openai_non_stream_tool_call(self) -> None:
         adapter = OpenAIProtocolAdapter()
-        req = _tool_request("openai")
+        req = _tool_request()
         raw_events = [
             OpenAIStreamEvent(
                 type="content_delta",
@@ -72,7 +74,7 @@ class TestTaggedProtocolAdapters(unittest.IsolatedAsyncioTestCase):
 
     async def test_openai_stream_final_answer(self) -> None:
         adapter = OpenAIProtocolAdapter()
-        req = _tool_request("openai", stream=True)
+        req = _tool_request(stream=True)
 
         chunks = []
         async for item in adapter.render_stream(
@@ -106,7 +108,7 @@ class TestTaggedProtocolAdapters(unittest.IsolatedAsyncioTestCase):
 
     async def test_openai_stream_tool_call_stops_on_first_terminal_block(self) -> None:
         adapter = OpenAIProtocolAdapter()
-        req = _tool_request("openai", stream=True)
+        req = _tool_request(stream=True)
 
         chunks = []
         async for item in adapter.render_stream(
@@ -150,7 +152,7 @@ class TestTaggedProtocolAdapters(unittest.IsolatedAsyncioTestCase):
 
     def test_anthropic_non_stream_final_answer(self) -> None:
         adapter = AnthropicProtocolAdapter()
-        req = _tool_request("anthropic")
+        req = _tool_request()
         raw_events = [
             OpenAIStreamEvent(
                 type="content_delta",
@@ -171,7 +173,7 @@ class TestTaggedProtocolAdapters(unittest.IsolatedAsyncioTestCase):
 
     async def test_anthropic_stream_tool_call(self) -> None:
         adapter = AnthropicProtocolAdapter()
-        req = _tool_request("anthropic", stream=True)
+        req = _tool_request(stream=True)
 
         chunks = []
         async for item in adapter.render_stream(

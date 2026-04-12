@@ -6,42 +6,14 @@ import json
 import uuid
 from typing import Any
 
+from toolcall_gateway import format_tools_for_prompt as _format_tools_for_prompt
+
 
 def format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
     """
     将 OpenAI / Cursor 风格的 tools 转为可读文本，用于 tagged prompt。
     """
-    if not tools:
-        return ""
-
-    lines: list[str] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        fn = tool.get("function") if tool.get("type") == "function" else tool
-        if not isinstance(fn, dict):
-            fn = tool
-        name = fn.get("name")
-        if not name:
-            continue
-        description = fn.get("description") or fn.get("summary") or ""
-        params = fn.get("parameters") or fn.get("input_schema") or {}
-        if isinstance(params, str):
-            try:
-                params = json.loads(params)
-            except json.JSONDecodeError:
-                params = {}
-        props = params.get("properties") or {}
-        required = set(params.get("required") or [])
-        args_desc = ", ".join(
-            f"{key}: {value.get('type', 'any')}"
-            + (" (required)" if key in required else "")
-            for key, value in props.items()
-            if isinstance(value, dict)
-        )
-        suffix = "..." if len(description) > 200 else ""
-        lines.append(f"- {name}({args_desc}): {description[:200]}{suffix}")
-    return "\n".join(lines)
+    return _format_tools_for_prompt(tools)
 
 
 def _normalize_tool_arguments(arguments: Any) -> str:

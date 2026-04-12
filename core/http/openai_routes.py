@@ -9,23 +9,23 @@ OpenAI 协议路由。
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from core.api.protocol_models import (
+from core.chat.handler import ChatHandler
+from core.http.dependencies import get_chat_handler
+from core.http.model_helpers import (
     format_openai_models_response,
     list_provider_model_ids,
 )
-from core.api.protocol_routes import (
-    create_protocol_router,
+from core.http.route_helpers import (
+    create_authenticated_router,
     format_openai_stream_error,
-    handle_protocol_chat_request,
+    handle_chat_request,
 )
-from core.api.chat_handler import ChatHandler
-from core.api.deps import get_chat_handler
 from core.protocol.openai import OpenAIProtocolAdapter
 
 
 def create_openai_router() -> APIRouter:
     """创建 OpenAI 协议路由。"""
-    router = create_protocol_router()
+    router = create_authenticated_router()
     adapter = OpenAIProtocolAdapter()
 
     @router.get("/openai/{provider}/v1/models")
@@ -38,7 +38,7 @@ def create_openai_router() -> APIRouter:
         request: Request,
         handler: ChatHandler = Depends(get_chat_handler),
     ) -> Any:
-        return await handle_protocol_chat_request(
+        return await handle_chat_request(
             adapter=adapter,
             provider=provider,
             request=request,

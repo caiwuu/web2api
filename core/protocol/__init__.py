@@ -1,1 +1,1 @@
-"""协议层：客户端协议适配与 Canonical 模型。"""
+"""协议层：客户端协议适配，adapter 直接产出 OpenAIChatRequest。"""

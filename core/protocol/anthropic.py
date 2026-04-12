@@ -3,43 +3,72 @@
 from __future__ import annotations
 
 import json
-import time
 import uuid as uuid_mod
 from collections.abc import AsyncIterator
-from typing import Any, Literal, cast
+from dataclasses import dataclass
+from typing import Any, Literal
 
-from core.api.conv_parser import (
+from core.shared.session_markers import (
     decode_latest_session_id,
     extract_session_id_marker,
     strip_session_id_suffix,
 )
-from core.hub.schemas import OpenAIStreamEvent
-from core.api.tagged_output import parse_tagged_output
-from core.api.tagged_stream_parser import TaggedStreamEvent, TaggedStreamParser
-from core.protocol.base import ProtocolAdapter
-from core.protocol.schemas import (
-    CanonicalChatRequest,
-    CanonicalContentBlock,
-    CanonicalMessage,
-    CanonicalToolSpec,
+from core.shared.models import (
+    InputAttachment,
+    OpenAIChatRequest,
+    OpenAIContentPart,
+    OpenAIMessage,
 )
+from core.shared.tagged_output import parse_tagged_output
+from core.shared.tagged_stream_parser import TaggedStreamEvent, TaggedStreamParser
+from core.protocol.base import ProtocolAdapter
+from core.protocol.images import (
+    download_remote_image,
+    parse_base64_image,
+    parse_data_url,
+)
+from core.stream.events import OpenAIStreamEvent
+
+
+@dataclass
+class _ContentBlock:
+    """Anthropic content block 的内部解析中间类型。"""
+
+    type: str
+    text: str | None = None
+    id: str | None = None
+    name: str | None = None
+    input: dict[str, Any] | None = None
+    tool_use_id: str | None = None
+    is_error: bool | None = None
+    mime_type: str | None = None
+    data: str | None = None
+    url: str | None = None
 
 
 class AnthropicProtocolAdapter(ProtocolAdapter):
     protocol_name = "anthropic"
 
-    def parse_request(
+    async def parse_request(
         self,
-        provider: str,
         raw_body: dict[str, Any],
-    ) -> CanonicalChatRequest:
-        messages = raw_body.get("messages") or []
-        if not isinstance(messages, list):
+    ) -> OpenAIChatRequest:
+        messages_raw = raw_body.get("messages") or []
+        if not isinstance(messages_raw, list):
             raise ValueError("messages 必须为数组")
+
         system_blocks = self._parse_content(raw_body.get("system"))
-        canonical_messages: list[CanonicalMessage] = []
         resume_session_id: str | None = None
-        for item in messages:
+
+        for block in system_blocks:
+            text = block.text or ""
+            decoded = decode_latest_session_id(text)
+            if decoded:
+                resume_session_id = decoded
+                block.text = strip_session_id_suffix(text)
+
+        parsed_msgs: list[tuple[str, list[_ContentBlock]]] = []
+        for item in messages_raw:
             if not isinstance(item, dict):
                 continue
             blocks = self._parse_content(item.get("content"))
@@ -49,44 +78,62 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
                 if decoded:
                     resume_session_id = decoded
                     block.text = strip_session_id_suffix(text)
-            canonical_messages.append(
-                CanonicalMessage(
-                    role=self._canonical_role(str(item.get("role") or "user"), blocks),
-                    content=blocks,
+            role = self._resolve_role(str(item.get("role") or "user"), blocks)
+            parsed_msgs.append((role, blocks))
+
+        openai_messages: list[OpenAIMessage] = []
+
+        if system_blocks:
+            openai_messages.append(
+                OpenAIMessage(
+                    role="system",
+                    content=self._blocks_to_openai_content(system_blocks),
                 )
             )
 
-        for block in system_blocks:
-            text = block.text or ""
-            decoded = decode_latest_session_id(text)
-            if decoded:
-                resume_session_id = decoded
-                block.text = strip_session_id_suffix(text)
+        for role, blocks in parsed_msgs:
+            openai_messages.append(self._blocks_to_openai_message(role, blocks))
 
-        tools = [self._parse_tool(tool) for tool in list(raw_body.get("tools") or [])]
-        stop_sequences = raw_body.get("stop_sequences") or []
-        return CanonicalChatRequest(
-            protocol="anthropic",
-            provider=provider,
+        openai_tools: list[dict] | None = None
+        raw_tools = raw_body.get("tools")
+        if raw_tools:
+            openai_tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": str(tool.get("name") or ""),
+                        "description": str(tool.get("description") or ""),
+                        "parameters": tool.get("input_schema") or {},
+                    },
+                }
+                for tool in raw_tools
+                if isinstance(tool, dict)
+            ]
+
+        last_user_attachments, all_attachments = await self._resolve_attachments(
+            parsed_msgs
+        )
+
+        return OpenAIChatRequest(
             model=str(raw_body.get("model") or ""),
-            system=system_blocks,
-            messages=canonical_messages,
+            messages=openai_messages,
             stream=bool(raw_body.get("stream") or False),
-            max_tokens=raw_body.get("max_tokens"),
-            temperature=raw_body.get("temperature"),
-            top_p=raw_body.get("top_p"),
-            stop_sequences=[str(v) for v in stop_sequences if isinstance(v, str)],
-            tools=tools,
+            tools=openai_tools,
             tool_choice=raw_body.get("tool_choice"),
-            parallel_tool_calls=raw_body.get("parallel_tool_calls")
-            if isinstance(raw_body.get("parallel_tool_calls"), bool)
-            else None,
+            parallel_tool_calls=(
+                raw_body.get("parallel_tool_calls")
+                if isinstance(raw_body.get("parallel_tool_calls"), bool)
+                else None
+            ),
             resume_session_id=resume_session_id,
+            attachment_files=[],
+            attachment_files_last_user=last_user_attachments,
+            attachment_files_all_users=all_attachments,
         )
 
     def render_non_stream(
         self,
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         raw_events: list[OpenAIStreamEvent],
     ) -> dict[str, Any]:
         full = "".join(
@@ -96,7 +143,7 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
         )
         session_marker = extract_session_id_marker(full)
         text = strip_session_id_suffix(full)
-        message_id = self._message_id(req)
+        message_id = f"msg_{uuid_mod.uuid4().hex}"
         if req.tools:
             parsed = parse_tagged_output(text)
             content: list[dict[str, Any]] = []
@@ -115,19 +162,13 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
                 if session_marker:
                     content.append({"type": "text", "text": session_marker})
                 return self._message_response(
-                    req,
-                    message_id,
-                    content,
-                    stop_reason="tool_use",
+                    req, message_id, content, stop_reason="tool_use"
                 )
             content.append(
                 {"type": "text", "text": (parsed.final_answer or "") + session_marker}
             )
             return self._message_response(
-                req,
-                message_id,
-                content,
-                stop_reason="end_turn",
+                req, message_id, content, stop_reason="end_turn"
             )
         rendered = text
         if session_marker:
@@ -141,10 +182,10 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
 
     async def render_stream(
         self,
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         raw_stream: AsyncIterator[OpenAIStreamEvent],
     ) -> AsyncIterator[str]:
-        message_id = self._message_id(req)
+        message_id = f"msg_{uuid_mod.uuid4().hex}"
         if not req.tools:
             renderer = _AnthropicTaggedRenderer(req, message_id)
             text_block_open = False
@@ -218,50 +259,39 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
             },
         )
 
-    @staticmethod
-    def _parse_tool(tool: dict[str, Any]) -> CanonicalToolSpec:
-        return CanonicalToolSpec(
-            name=str(tool.get("name") or ""),
-            description=str(tool.get("description") or ""),
-            input_schema=tool.get("input_schema") or {},
-        )
+    # ── internal helpers ──
 
     @staticmethod
-    def _canonical_role(
+    def _resolve_role(
         raw_role: str,
-        blocks: list[CanonicalContentBlock],
-    ) -> Literal["system", "user", "assistant", "tool"]:
-        if raw_role == "user" and any(block.type == "tool_result" for block in blocks):
+        blocks: list[_ContentBlock],
+    ) -> str:
+        if raw_role == "user" and any(b.type == "tool_result" for b in blocks):
             return "tool"
-        return cast(
-            Literal["system", "user", "assistant", "tool"],
-            raw_role,
-        )
+        return raw_role
 
     @staticmethod
-    def _parse_content(value: Any) -> list[CanonicalContentBlock]:
+    def _parse_content(value: Any) -> list[_ContentBlock]:
         if value is None:
             return []
         if isinstance(value, str):
-            return [CanonicalContentBlock(type="text", text=value)]
+            return [_ContentBlock(type="text", text=value)]
         if isinstance(value, list):
-            blocks: list[CanonicalContentBlock] = []
+            blocks: list[_ContentBlock] = []
             for item in value:
                 if isinstance(item, str):
-                    blocks.append(CanonicalContentBlock(type="text", text=item))
+                    blocks.append(_ContentBlock(type="text", text=item))
                     continue
                 if not isinstance(item, dict):
                     continue
                 item_type = str(item.get("type") or "")
                 if item_type == "text":
                     blocks.append(
-                        CanonicalContentBlock(
-                            type="text", text=str(item.get("text") or "")
-                        )
+                        _ContentBlock(type="text", text=str(item.get("text") or ""))
                     )
                 elif item_type == "thinking":
                     blocks.append(
-                        CanonicalContentBlock(
+                        _ContentBlock(
                             type="thinking", text=str(item.get("thinking") or "")
                         )
                     )
@@ -270,7 +300,7 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
                     source_type = source.get("type")
                     if source_type == "base64":
                         blocks.append(
-                            CanonicalContentBlock(
+                            _ContentBlock(
                                 type="image",
                                 mime_type=str(source.get("media_type") or ""),
                                 data=str(source.get("data") or ""),
@@ -278,13 +308,15 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
                         )
                 elif item_type == "tool_use":
                     blocks.append(
-                        CanonicalContentBlock(
+                        _ContentBlock(
                             type="tool_use",
                             id=str(item.get("id") or ""),
                             name=str(item.get("name") or ""),
-                            input=item.get("input")
-                            if isinstance(item.get("input"), dict)
-                            else {},
+                            input=(
+                                item.get("input")
+                                if isinstance(item.get("input"), dict)
+                                else {}
+                            ),
                         )
                     )
                 elif item_type == "tool_result":
@@ -292,7 +324,7 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
                         item.get("content")
                     )
                     blocks.append(
-                        CanonicalContentBlock(
+                        _ContentBlock(
                             type="tool_result",
                             tool_use_id=str(item.get("tool_use_id") or ""),
                             text="\n".join(
@@ -307,8 +339,120 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
         raise ValueError("content 格式不合法")
 
     @staticmethod
+    def _blocks_to_openai_content(
+        blocks: list[_ContentBlock],
+    ) -> str | list[OpenAIContentPart]:
+        if not blocks:
+            return ""
+        parts: list[OpenAIContentPart] = []
+        for block in blocks:
+            if block.type in {"text", "thinking", "tool_result"}:
+                parts.append(OpenAIContentPart(type="text", text=block.text or ""))
+            elif block.type == "image":
+                url = block.url or block.data or ""
+                parts.append(
+                    OpenAIContentPart(type="image_url", image_url={"url": url})
+                )
+        if not parts:
+            return ""
+        if len(parts) == 1 and parts[0].type == "text":
+            return parts[0].text or ""
+        return parts
+
+    @classmethod
+    def _blocks_to_openai_message(
+        cls, role: str, blocks: list[_ContentBlock]
+    ) -> OpenAIMessage:
+        if role == "assistant":
+            text_blocks = [b for b in blocks if b.type != "tool_use"]
+            tool_use_blocks = [b for b in blocks if b.type == "tool_use"]
+            tool_calls = [
+                {
+                    "id": b.id or "",
+                    "type": "function",
+                    "function": {
+                        "name": b.name or "",
+                        "arguments": json.dumps(b.input or {}, ensure_ascii=False),
+                    },
+                }
+                for b in tool_use_blocks
+            ]
+            return OpenAIMessage(
+                role=role,
+                content=cls._blocks_to_openai_content(text_blocks),
+                tool_calls=tool_calls or None,
+            )
+
+        if role == "tool":
+            tool_call_id = next(
+                (
+                    b.tool_use_id
+                    for b in blocks
+                    if b.type == "tool_result" and b.tool_use_id
+                ),
+                None,
+            )
+            return OpenAIMessage(
+                role=role,
+                content=cls._blocks_to_openai_content(blocks),
+                tool_call_id=tool_call_id,
+            )
+
+        return OpenAIMessage(
+            role=role,
+            content=cls._blocks_to_openai_content(blocks),
+        )
+
+    @staticmethod
+    async def _resolve_attachments(
+        parsed_msgs: list[tuple[str, list[_ContentBlock]]],
+    ) -> tuple[list[InputAttachment], list[InputAttachment]]:
+        last_user_blocks: list[_ContentBlock] = []
+        all_image_blocks: list[_ContentBlock] = []
+
+        for role, blocks in parsed_msgs:
+            if role not in ("user", "system"):
+                continue
+            images = [b for b in blocks if b.type == "image"]
+            all_image_blocks.extend(images)
+
+        for role, blocks in reversed(parsed_msgs):
+            if role in ("user", "system"):
+                last_user_blocks = [b for b in blocks if b.type == "image"]
+                break
+
+        async def _prepare(
+            blocks: list[_ContentBlock],
+        ) -> list[InputAttachment]:
+            attachments: list[InputAttachment] = []
+            for idx, block in enumerate(blocks, start=1):
+                prefix = f"message_image_{idx}"
+                if block.url:
+                    prepared = await download_remote_image(block.url, prefix=prefix)
+                elif block.data and block.data.startswith("data:"):
+                    prepared = parse_data_url(block.data, prefix=prefix)
+                elif block.data and block.mime_type:
+                    prepared = parse_base64_image(
+                        block.data, block.mime_type, prefix=prefix
+                    )
+                else:
+                    continue
+                attachments.append(
+                    InputAttachment(
+                        filename=prepared.filename,
+                        mime_type=prepared.mime_type,
+                        data=prepared.data,
+                    )
+                )
+            return attachments
+
+        last_attachments = await _prepare(last_user_blocks)
+        all_attachments = await _prepare(all_image_blocks)
+        return last_attachments, all_attachments
+
+    @staticmethod
     def _message_response(
-        req: CanonicalChatRequest,
+        req: OpenAIChatRequest,
         message_id: str,
         content: list[dict[str, Any]],
         *,
@@ -325,17 +469,9 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
             "usage": {"input_tokens": 0, "output_tokens": 0},
         }
 
-    @staticmethod
-    def _message_id(req: CanonicalChatRequest) -> str:
-        return str(
-            req.metadata.setdefault(
-                "anthropic_message_id", f"msg_{uuid_mod.uuid4().hex}"
-            )
-        )
-
 
 class _AnthropicTaggedRenderer:
-    def __init__(self, req: CanonicalChatRequest, message_id: str) -> None:
+    def __init__(self, req: OpenAIChatRequest, message_id: str) -> None:
         self._req = req
         self._message_id = message_id
         self._started = False

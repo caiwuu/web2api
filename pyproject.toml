@@ -11,6 +11,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.12.5",
     "pytz>=2025.2",
+    "toolcall-gateway",
     "uvicorn[standard]>=0.40.0",
 ]
 

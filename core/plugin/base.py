@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator
 
 from playwright.async_api import BrowserContext, Page
 
-from core.api.schemas import InputAttachment
+from core.shared.models import InputAttachment
 from core.config.settings import get
 from core.plugin.errors import AccountFrozenError  # noqa: F401  — re-export for backward compat
 from core.plugin.helpers import (

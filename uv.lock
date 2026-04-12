@@ -380,6 +380,18 @@ wheels = [
 ]
 
 [[package]]
+name = "toolcall-gateway"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/37/789955a5479808ce0aad0e0c2e52b653a1dfcdf550d35cc66b6283c89666/toolcall_gateway-1.0.0.tar.gz", hash = "sha256:384f27c959d39b6dde70788602d7d0bf27fd71283bd41027b637847d0696c5b7", size = 13889, upload-time = "2026-04-03T16:09:08.012Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/58/a0072dddb2acb7a149d5b64f964e6bae09b0a155c44802a9eb06c77a6210/toolcall_gateway-1.0.0-py3-none-any.whl", hash = "sha256:82b5fdc3bd2b60518b81cedd7c2d5f88787fa64fb44be06f7c24698c1064ca8b", size = 12040, upload-time = "2026-04-03T16:09:06.86Z" },
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -537,6 +549,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pytz" },
     { name = "pyyaml" },
+    { name = "toolcall-gateway" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -553,6 +566,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pytz", specifier = ">=2025.2" },
     { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "toolcall-gateway" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.40.0" },
 ]
 

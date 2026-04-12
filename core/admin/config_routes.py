@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from core.api.auth import (
+from core.admin.auth import (
     ADMIN_SESSION_COOKIE,
     admin_logged_in,
     check_admin_login_rate_limit,
@@ -22,9 +22,9 @@ from core.api.auth import (
     require_config_login_enabled,
     verify_config_secret,
 )
-from core.api.chat_handler import ChatHandler
-from core.api.deps import get_config_repo
+from core.chat.handler import ChatHandler
 from core.config.repository import ConfigRepository
+from core.http.dependencies import get_config_repo
 from core.plugin.base import PluginRegistry
 
 logger = logging.getLogger(__name__)
