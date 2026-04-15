@@ -287,6 +287,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-multipart"
+version = "0.0.26"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/71/b145a380824a960ebd60e1014256dbb7d2253f2316ff2d73dfd8928ec2c3/python_multipart-0.0.26.tar.gz", hash = "sha256:08fadc45918cd615e26846437f50c5d6d23304da32c341f289a617127b081f17", size = 43501, upload-time = "2026-04-10T14:09:59.473Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/22/f1925cdda983ab66fc8ec6ec8014b959262747e58bdca26a4e3d1da29d56/python_multipart-0.0.26-py3-none-any.whl", hash = "sha256:c0b169f8c4484c13b0dcf2ef0ec3a4adb255c4b7d18d8e420477d2b1dd03f185", size = 28847, upload-time = "2026-04-10T14:09:58.131Z" },
+]
+
+[[package]]
 name = "pytz"
 version = "2025.2"
 source = { registry = "https://pypi.org/simple" }
@@ -547,6 +556,7 @@ dependencies = [
     { name = "playwright" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "python-multipart" },
     { name = "pytz" },
     { name = "pyyaml" },
     { name = "toolcall-gateway" },
@@ -564,6 +574,7 @@ requires-dist = [
     { name = "playwright", specifier = ">=1.58.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.26" },
     { name = "pytz", specifier = ">=2025.2" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "toolcall-gateway" },

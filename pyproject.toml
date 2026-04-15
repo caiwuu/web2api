@@ -13,6 +13,7 @@ dependencies = [
     "pytz>=2025.2",
     "toolcall-gateway",
     "uvicorn[standard]>=0.40.0",
+    "python-multipart>=0.0.26",
 ]
 
 [dependency-groups]

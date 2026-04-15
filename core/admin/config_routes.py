@@ -1,5 +1,5 @@
 """
-配置 API：GET/PUT /api/config；配置页 GET /config。
+配置 API：Identity 管理（上传/删除/扫描/列表）；配置页 GET /config。
 """
 
 import logging
@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -25,6 +25,11 @@ from core.admin.auth import (
 from core.chat.handler import ChatHandler
 from core.config.repository import ConfigRepository
 from core.http.dependencies import get_config_repo
+from core.identity.manager import (
+    install_identity_from_zip,
+    remove_identity,
+    scan_identities,
+)
 from core.plugin.base import PluginRegistry
 
 logger = logging.getLogger(__name__)
@@ -41,20 +46,165 @@ class AdminLoginRequest(BaseModel):
     secret: str
 
 
+async def _refresh_handler(request: Request, repo: ConfigRepository) -> None:
+    """重载账号池并使配置立即生效。"""
+    groups = repo.load_groups()
+    handler: ChatHandler | None = getattr(request.app.state, "chat_handler", None)
+    if handler is None:
+        raise RuntimeError("chat_handler 未初始化")
+    await handler.refresh_configuration(groups, config_repo=repo)
+
+
 def create_config_router() -> APIRouter:
     router = APIRouter()
 
+    # -------------------------------------------------------------------
+    # Identity 管理 API
+    # -------------------------------------------------------------------
+
     @router.get("/api/types")
     def get_types(_: None = Depends(require_config_login)) -> list[str]:
-        """返回已注册的 type 列表，供配置页 type 下拉使用。"""
         return PluginRegistry.all_types()
+
+    @router.get("/api/identities")
+    def list_identities(
+        request: Request,
+        _: None = Depends(require_config_login),
+        repo: ConfigRepository = Depends(get_config_repo),
+    ) -> dict[str, Any]:
+        """列出所有已安装的 identity 及运行时状态。"""
+        identities = repo.load_identities()
+        handler: ChatHandler | None = getattr(
+            request.app.state, "chat_handler", None
+        )
+        runtime_status = (
+            handler.get_account_runtime_status() if handler else {}
+        )
+        now = int(time.time())
+        items: list[dict[str, Any]] = []
+        for identity in identities:
+            type_statuses: dict[str, dict[str, Any]] = {}
+            for t in identity.types:
+                account_id = f"{identity.fingerprint_id}:{identity.fingerprint_id}"
+                rt_key = f"{account_id}::{t}"
+                rt = runtime_status.get(rt_key, {})
+                type_statuses[t] = {
+                    "is_active": bool(rt.get("is_active")),
+                    "tab_state": rt.get("tab_state"),
+                    "accepting_new": rt.get("accepting_new"),
+                    "active_requests": rt.get("active_requests", 0),
+                    "frozen_until": rt.get("frozen_until"),
+                }
+            items.append(
+                {
+                    "fingerprint_id": identity.fingerprint_id,
+                    "timezone": identity.timezone,
+                    "proxy_url": _mask_proxy_url(identity.proxy_url),
+                    "types": identity.types,
+                    "enabled": identity.enabled,
+                    "type_statuses": type_statuses,
+                }
+            )
+        return {"now": now, "identities": items}
+
+    @router.post("/api/identities/upload")
+    async def upload_identity(
+        request: Request,
+        file: UploadFile,
+        _: None = Depends(require_config_login),
+        repo: ConfigRepository = Depends(get_config_repo),
+    ) -> dict[str, Any]:
+        """上传 identity zip 文件并安装。"""
+        if not file.filename or not file.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="请上传 .zip 文件")
+        try:
+            identity = install_identity_from_zip(file.file)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception("安装 identity 失败")
+            raise HTTPException(
+                status_code=500, detail=f"安装失败: {e}"
+            ) from e
+
+        repo.save_identity(identity)
+        try:
+            await _refresh_handler(request, repo)
+        except Exception as e:
+            logger.exception("重载配置失败")
+            raise HTTPException(
+                status_code=500, detail=f"已安装但重载失败: {e}"
+            ) from e
+        return {
+            "status": "ok",
+            "fingerprint_id": identity.fingerprint_id,
+            "types": identity.types,
+        }
+
+    @router.delete("/api/identities/{fingerprint_id}")
+    async def delete_identity(
+        fingerprint_id: str,
+        request: Request,
+        _: None = Depends(require_config_login),
+        repo: ConfigRepository = Depends(get_config_repo),
+    ) -> dict[str, Any]:
+        """删除 identity：先关浏览器，再删 DB 和文件。"""
+        repo.delete_identity(fingerprint_id)
+        try:
+            await _refresh_handler(request, repo)
+        except Exception as e:
+            logger.exception("重载配置失败")
+        # 浏览器已关闭（prune 会关掉 group 不存在的浏览器），再清理文件
+        remove_identity(fingerprint_id)
+        return {"status": "ok"}
+
+    @router.patch("/api/identities/{fingerprint_id}")
+    async def patch_identity(
+        fingerprint_id: str,
+        body: dict[str, Any],
+        request: Request,
+        _: None = Depends(require_config_login),
+        repo: ConfigRepository = Depends(get_config_repo),
+    ) -> dict[str, Any]:
+        """启用/禁用某个 identity。"""
+        if "enabled" in body:
+            repo.set_identity_enabled(fingerprint_id, bool(body["enabled"]))
+        try:
+            await _refresh_handler(request, repo)
+        except Exception as e:
+            logger.exception("重载配置失败")
+        return {"status": "ok"}
+
+    @router.post("/api/identities/scan")
+    async def scan_and_register(
+        request: Request,
+        _: None = Depends(require_config_login),
+        repo: ConfigRepository = Depends(get_config_repo),
+    ) -> dict[str, Any]:
+        """扫描 fp-data 目录，发现并注册未入库的 identity。"""
+        found = scan_identities()
+        existing = {i.fingerprint_id for i in repo.load_identities()}
+        registered: list[str] = []
+        for identity in found:
+            if identity.fingerprint_id not in existing:
+                repo.save_identity(identity)
+                registered.append(identity.fingerprint_id)
+        if registered:
+            try:
+                await _refresh_handler(request, repo)
+            except Exception as e:
+                logger.exception("重载配置失败")
+        return {"status": "ok", "registered": registered}
+
+    # -------------------------------------------------------------------
+    # 兼容旧 API（返回 identity 视角数据）
+    # -------------------------------------------------------------------
 
     @router.get("/api/config")
     def get_config(
         _: None = Depends(require_config_login),
         repo: ConfigRepository = Depends(get_config_repo),
     ) -> list[dict[str, Any]]:
-        """获取配置（代理组 + 账号 name/type/auth）。"""
         return repo.load_raw()
 
     @router.get("/api/config/status")
@@ -63,8 +213,9 @@ def create_config_router() -> APIRouter:
         _: None = Depends(require_config_login),
         repo: ConfigRepository = Depends(get_config_repo),
     ) -> dict[str, Any]:
-        """返回配置页需要的账号运行时状态。"""
-        handler: ChatHandler | None = getattr(request.app.state, "chat_handler", None)
+        handler: ChatHandler | None = getattr(
+            request.app.state, "chat_handler", None
+        )
         if handler is None:
             raise HTTPException(status_code=503, detail="服务未就绪")
         runtime_status = handler.get_account_runtime_status()
@@ -73,9 +224,11 @@ def create_config_router() -> APIRouter:
         for group in repo.load_groups():
             for account in group.accounts:
                 account_id = f"{group.fingerprint_id}:{account.name}"
-                runtime = runtime_status.get(account_id, {})
+                rt_key = f"{account_id}::{account.type}"
+                runtime = runtime_status.get(rt_key, {})
                 is_frozen = (
-                    account.unfreeze_at is not None and int(account.unfreeze_at) > now
+                    account.unfreeze_at is not None
+                    and int(account.unfreeze_at) > now
                 )
                 accounts[account_id] = {
                     "fingerprint_id": group.fingerprint_id,
@@ -90,81 +243,9 @@ def create_config_router() -> APIRouter:
                 }
         return {"now": now, "accounts": accounts}
 
-    @router.put("/api/config")
-    async def put_config(
-        request: Request,
-        config: list[dict[str, Any]],
-        _: None = Depends(require_config_login),
-        repo: ConfigRepository = Depends(get_config_repo),
-    ) -> dict[str, Any]:
-        """更新配置并立即生效。"""
-        if not config:
-            raise HTTPException(status_code=400, detail="配置不能为空")
-        for i, g in enumerate(config):
-            if not isinstance(g, dict):
-                raise HTTPException(status_code=400, detail=f"第 {i + 1} 项应为对象")
-            if "fingerprint_id" not in g:
-                raise HTTPException(
-                    status_code=400, detail=f"代理组 {i + 1} 缺少字段: fingerprint_id"
-                )
-            use_proxy = g.get("use_proxy", True)
-            if isinstance(use_proxy, str):
-                use_proxy = use_proxy.strip().lower() not in {
-                    "0",
-                    "false",
-                    "no",
-                    "off",
-                }
-            else:
-                use_proxy = bool(use_proxy)
-            if use_proxy and not str(g.get("proxy_host", "")).strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"代理组 {i + 1} 启用了代理，需填写 proxy_host",
-                )
-            accounts = g.get("accounts", [])
-            if not accounts:
-                raise HTTPException(
-                    status_code=400, detail=f"代理组 {i + 1} 至少需要一个账号"
-                )
-            for j, a in enumerate(accounts):
-                if not isinstance(a, dict) or not (a.get("name") or "").strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"代理组 {i + 1} 账号 {j + 1} 需包含 name",
-                    )
-                if not (a.get("type") or "").strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"代理组 {i + 1} 账号 {j + 1} 需包含 type（如 claude）",
-                    )
-                if "enabled" in a and not isinstance(
-                    a.get("enabled"), (bool, int, str)
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"代理组 {i + 1} 账号 {j + 1} 的 enabled 类型无效",
-                    )
-        try:
-            repo.save_raw(config)
-        except Exception as e:
-            logger.exception("保存配置失败")
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        # 立即生效：重新加载池并替换 chat_handler
-        try:
-            groups = repo.load_groups()
-            handler: ChatHandler | None = getattr(
-                request.app.state, "chat_handler", None
-            )
-            if handler is None:
-                raise RuntimeError("chat_handler 未初始化")
-            await handler.refresh_configuration(groups, config_repo=repo)
-        except Exception as e:
-            logger.exception("重载账号池失败")
-            raise HTTPException(
-                status_code=500, detail=f"配置已保存但重载失败: {e}"
-            ) from e
-        return {"status": "ok", "message": "配置已保存并生效"}
+    # -------------------------------------------------------------------
+    # 管理员登录/登出 & 配置页
+    # -------------------------------------------------------------------
 
     @router.get("/login", response_model=None)
     def login_page(request: Request) -> FileResponse | RedirectResponse:
@@ -189,7 +270,9 @@ def create_config_router() -> APIRouter:
                     status_code=429,
                     detail=f"登录失败次数过多，请 {lock_seconds} 秒后再试",
                 )
-            raise HTTPException(status_code=401, detail="登录失败，secret 不正确")
+            raise HTTPException(
+                status_code=401, detail="登录失败，secret 不正确"
+            )
         record_admin_login_success(request)
         store = request.app.state.admin_sessions
         token = store.create()
@@ -217,7 +300,6 @@ def create_config_router() -> APIRouter:
 
     @router.get("/config", response_model=None)
     def config_page(request: Request) -> FileResponse | RedirectResponse:
-        """配置页入口。"""
         require_config_login_enabled()
         if not admin_logged_in(request):
             return RedirectResponse(url="/login", status_code=302)
@@ -227,3 +309,28 @@ def create_config_router() -> APIRouter:
         return FileResponse(path, headers=NO_CACHE_HEADERS)
 
     return router
+
+
+def _mask_proxy_url(url: str) -> str:
+    """脱敏代理 URL：隐藏用户名前缀（-region 之前）和密码。
+
+    caiwu123-region-GB-...:caiwu123@host → ****-region-GB-...:****@host
+    """
+    if not url or "@" not in url:
+        return url
+    try:
+        scheme_rest = url.split("://", 1)
+        if len(scheme_rest) != 2:
+            return url
+        scheme, rest = scheme_rest
+        userinfo, host = rest.split("@", 1)
+        user, _, password = userinfo.partition(":")
+        # 用户名中 -region 之前的部分脱敏
+        idx = user.find("-region")
+        if idx > 0:
+            user = "****" + user[idx:]
+        else:
+            user = "****"
+        return f"{scheme}://{user}:****@{host}"
+    except Exception:
+        return url

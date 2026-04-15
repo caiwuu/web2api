@@ -29,6 +29,8 @@ from core.http.openai_routes import create_openai_router
 from core.admin.config_routes import create_config_router
 from core.plugin.base import PluginRegistry
 from core.plugin.claude import register_claude_plugin
+from core.plugin.chatgpt import register_chatgpt_plugin
+from core.plugin.deepseek import register_deepseek_plugin
 from core.runtime.browser_manager import BrowserManager
 from core.runtime.session_cache import SessionCache
 
@@ -40,10 +42,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """启动时初始化配置与 ChatHandler，关闭时不做持久化（会话缓存进程内）。"""
     # 注册插件
     register_claude_plugin()
+    register_chatgpt_plugin()
+    register_deepseek_plugin()
     ensure_config_secret_hashed()
 
     repo = ConfigRepository()
     repo.init_schema()
+
+    # 启动时自动扫描 fp-data 目录，注册尚未入库的 identity
+    from core.identity.manager import scan_identities
+
+    for identity in scan_identities():
+        existing = {i.fingerprint_id for i in repo.load_identities()}
+        if identity.fingerprint_id not in existing:
+            repo.save_identity(identity)
+            logger.info(
+                "自动注册 identity: %s types=%s",
+                identity.fingerprint_id,
+                identity.types,
+            )
+
     groups = repo.load_groups()
 
     chromium_bin = (get("browser", "chromium_bin") or "").strip() or CHROMIUM_BIN
@@ -96,7 +114,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lock_seconds=configured_config_login_lock_seconds(),
     )
     if not groups:
-        logger.warning("数据库无配置，服务已启动但当前无可用账号")
+        logger.warning("无 identity，服务已启动但当前无可用账号。请上传 identity zip 或将 identity 目录放入 ~/fp-data/")
     if api_keys:
         logger.info("API 鉴权已启用，已加载 %d 个 API Key", len(api_keys))
     if config_login_enabled():

@@ -7,7 +7,7 @@
 - **config**：数据模型（`ProxyGroupConfig`、`AccountConfig`，含 `name`/`type`/`auth` JSON）与持久化（独立 DB `account_pool.sqlite3`）。
 - **account**：`AccountPool`，按 type 轮询 `acquire(type)`。
 - **runtime**：`ProxyKey`、`SessionCache`（session_id → 定位 page/context）、`BrowserManager`（进程与 CDP、按 type 缓存 page）。
-- **plugin**：`AbstractPlugin`、`PluginRegistry`、`ClaudePlugin`（ensure_page / apply_auth / create_conversation / stream_completion）。
+- **plugin**：`AbstractPlugin`、`PluginRegistry`、`ClaudePlugin`（ensure_page / create_conversation / stream_completion）。
 - **chat**：`ChatHandler` 与调度/执行协作类，负责会话复用、prompt 拼装、插件调用。
 - **http**：OpenAI / Anthropic 路由、依赖与协议路由公共逻辑。
 - **admin**：配置页鉴权与配置管理路由。
@@ -64,7 +64,7 @@ repo.save_groups([
 
 ## 扩展新 type
 
-1. 实现 `core.plugin.base.AbstractPlugin`（ensure_page、apply_auth、create_conversation、stream_completion）。
+1. 实现 `core.plugin.base.AbstractPlugin`（create_page、create_conversation、stream_completion）。
 2. 在应用启动前 `PluginRegistry.register(YourPlugin())`。
 3. 在 account 中为该 type 添加账号，请求时使用 `/{your_type}/v1/chat/completions`。
 

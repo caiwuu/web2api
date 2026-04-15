@@ -19,7 +19,6 @@ from core.shared.models import InputAttachment
 from core.config.settings import get
 from core.plugin.errors import AccountFrozenError  # noqa: F401  — re-export for backward compat
 from core.plugin.helpers import (
-    apply_cookie_auth,
     create_page_for_site,
     stream_completion_via_sse,
 )
@@ -65,17 +64,6 @@ class AbstractPlugin(ABC):
     async def create_page(
         self, context: BrowserContext, reuse_page: Page | None = None
     ) -> Page:
-        raise NotImplementedError
-
-    async def apply_auth(
-        self,
-        context: BrowserContext,
-        page: Page,
-        auth: dict[str, Any],
-        *,
-        reload: bool = True,
-        **kwargs: Any,
-    ) -> None:
         raise NotImplementedError
 
     async def create_conversation(
@@ -139,7 +127,7 @@ class BaseSitePlugin(AbstractPlugin):
       4. 实现 build_completion_url/body()    — 拼补全请求的 URL 与 body
       5. 实现 parse_stream_event()          — 解析单条流式事件（如 SSE data）
 
-    create_page / apply_auth / create_conversation / stream_completion
+    create_page / create_conversation / stream_completion
     均由基类自动编排，无需重写。
     """
 
@@ -180,24 +168,6 @@ class BaseSitePlugin(AbstractPlugin):
     ) -> Page:
         return await create_page_for_site(
             context, self.start_url, reuse_page=reuse_page
-        )
-
-    async def apply_auth(
-        self,
-        context: BrowserContext,
-        page: Page,
-        auth: dict[str, Any],
-        *,
-        reload: bool = True,
-    ) -> None:
-        await apply_cookie_auth(
-            context,
-            page,
-            auth,
-            self.site.cookie_name,
-            self.site.auth_keys,
-            self.site.cookie_domain,
-            reload=reload,
         )
 
     async def create_conversation(

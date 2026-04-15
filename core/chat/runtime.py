@@ -7,11 +7,9 @@ import logging
 import time
 from typing import Any
 
-from playwright.async_api import BrowserContext, Page
-
 from core.chat.state import ChatHandlerState, proxy_key_for_group
 from core.config.repository import ConfigRepository
-from core.config.schema import AccountConfig, ProxyGroupConfig
+from core.config.schema import ProxyGroupConfig
 from core.plugin.base import BaseSitePlugin, PluginRegistry
 from core.plugin.helpers import clear_cookies_for_domain
 from core.runtime.browser_manager import ClosedTabInfo
@@ -50,9 +48,12 @@ class ChatRuntimeCoordinator:
         await self.prewarm_resident_browsers()
 
     async def prewarm_resident_browsers(self) -> None:
-        """启动时预热常驻浏览器，并为其下可用 type 建立 tab。"""
+        """预热常驻浏览器：已有浏览器数 >= resident_browser_count 时跳过。"""
         async with self._state.schedule_lock:
-            warmed = 0  # 已预热「分组数」计数，受 resident_browser_count 限制
+            running = self._state.browser_manager.browser_count()
+            if running >= self._state.resident_browser_count:
+                return
+            warmed = running
             for group in self._state.pool.groups():
                 if warmed >= self._state.resident_browser_count:
                     break
@@ -89,7 +90,6 @@ class ChatRuntimeCoordinator:
                         type_name,
                         self._state.pool.account_id(group, account),
                         plugin.create_page,
-                        self.make_apply_auth_fn(plugin, account),
                     )
                 warmed += 1
 
@@ -126,25 +126,30 @@ class ChatRuntimeCoordinator:
     def report_account_unfreeze(
         self,
         fingerprint_id: str,
-        account_name: str,
+        type_name: str,
         unfreeze_at: int,
     ) -> None:
-        """记录账号解冻时间并重载池，使后续 acquire 按当前时间判断可用性。"""
+        """记录某 type 的解冻时间并重载池，使后续 acquire 按当前时间判断可用性。"""
         if self._state.config_repo is None:
             return
         self._state.config_repo.update_account_unfreeze_at(
             fingerprint_id,
-            account_name,
+            type_name,
             unfreeze_at,
         )
         self.reload_pool(self._state.config_repo.load_groups())
 
     def get_account_runtime_status(self) -> dict[str, dict[str, Any]]:
-        """返回当前账号运行时状态，供配置页展示角标。"""
+        """返回当前账号运行时状态，供配置页展示角标。
+
+        key 格式为 ``account_id::type_name``，避免同一 identity 下
+        不同 type 共享 account_id 时互相覆盖。
+        """
         status: dict[str, dict[str, Any]] = {}
         for proxy_key, entry in self._state.browser_manager.list_browser_entries():
             for type_name, tab in entry.tabs.items():
-                status[tab.account_id] = {
+                key = f"{tab.account_id}::{type_name}"
+                status[key] = {
                     "fingerprint_id": proxy_key.fingerprint_id,
                     "type": type_name,
                     "is_active": True,
@@ -154,18 +159,6 @@ class ChatRuntimeCoordinator:
                     "frozen_until": tab.frozen_until,
                 }
         return status
-
-    def make_apply_auth_fn(
-        self,
-        plugin: Any,
-        account: AccountConfig,
-    ) -> Any:
-        """返回 `browser_manager.open_tab` 所需的闭包：在新 page 上应用账号登录态。"""
-
-        async def _apply_auth(context: BrowserContext, page: Page) -> None:
-            await plugin.apply_auth(context, page, account.auth)
-
-        return _apply_auth
 
     def apply_closed_tabs_locked(self, closed_tabs: list[ClosedTabInfo]) -> None:
         """tab/浏览器关闭后：清 session 缓存并通知插件丢弃对应站点会话。"""
@@ -193,12 +186,19 @@ class ChatRuntimeCoordinator:
             logger.debug("关 tab 前清 cookie 失败 type=%s: %s", type_name, exc)
 
     async def prune_invalid_resources_locked(self) -> None:
-        """关闭配置中已不存在的浏览器/tab，避免热更新后继续使用失效资源。"""
+        """关闭配置中已不存在或已无可用账号的浏览器/tab。"""
         for proxy_key, entry in list(
             self._state.browser_manager.list_browser_entries()
         ):
             group = self._state.pool.get_group_by_proxy_key(proxy_key)
             if group is None:
+                self.apply_closed_tabs_locked(
+                    await self._state.browser_manager.close_browser(proxy_key)
+                )
+                continue
+            # 该 group 下所有 type 都无可用账号 → 关闭整个浏览器
+            has_any_available = any(a.is_available() for a in group.accounts)
+            if not has_any_available:
                 self.apply_closed_tabs_locked(
                     await self._state.browser_manager.close_browser(proxy_key)
                 )
@@ -228,17 +228,11 @@ class ChatRuntimeCoordinator:
                                 )
                             )
                             if next_account is not None:
-                                plugin = PluginRegistry.get(type_name)
-                                if plugin is not None:
                                     switched = await self._state.browser_manager.switch_tab_account(
                                         proxy_key,
                                         type_name,
                                         self._state.pool.account_id(
                                             current_group,
-                                            next_account,
-                                        ),
-                                        self.make_apply_auth_fn(
-                                            plugin,
                                             next_account,
                                         ),
                                     )
@@ -359,15 +353,11 @@ class ChatRuntimeCoordinator:
                     exclude_account_ids={tab.account_id},
                 )
                 if next_account is not None:
-                    plugin = PluginRegistry.get(type_name)
-                    if plugin is None:
-                        continue
                     self.invalidate_tab_sessions_locked(proxy_key, type_name)
                     switched = await self._state.browser_manager.switch_tab_account(
                         proxy_key,
                         type_name,
                         self._state.pool.account_id(group, next_account),
-                        self.make_apply_auth_fn(plugin, next_account),
                     )
                     if switched:
                         continue

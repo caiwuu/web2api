@@ -1,0 +1,6 @@
+{
+  "fingerprint_id": "1110",
+  "timezone": "Europe/London",
+  "proxy_url": "socks5://caiwu123-region-GB-st-England-city-Manchester-sid-8dJR7Rvq-t-5:caiwu123@sg.arxlabs.io:3010",
+  "type": ["claude", "chatgpt", "deepseek"]
+}

@@ -82,13 +82,13 @@ class ChatHandler:
     def report_account_unfreeze(
         self,
         fingerprint_id: str,
-        account_name: str,
+        type_name: str,
         unfreeze_at: int,
     ) -> None:
         """插件上报限流结束时间：持久化解冻时间并重载池，使调度重新允许该账号。"""
         self._runtime.report_account_unfreeze(
             fingerprint_id,
-            account_name,
+            type_name,
             unfreeze_at,
         )
 

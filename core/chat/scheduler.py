@@ -171,7 +171,6 @@ class ChatRequestScheduler:
                     type_name,
                     self._state.pool.account_id(group, account),
                     plugin.create_page,
-                    self._runtime.make_apply_auth_fn(plugin, account),
                 )
                 page = self._state.browser_manager.acquire_tab(
                     proxy_key,
@@ -226,7 +225,6 @@ class ChatRequestScheduler:
                         proxy_key,
                         type_name,
                         self._state.pool.account_id(group, next_account),
-                        self._runtime.make_apply_auth_fn(plugin, next_account),
                     )
                     if switched:
                         page = self._state.browser_manager.acquire_tab(
@@ -272,7 +270,6 @@ class ChatRequestScheduler:
             type_name,
             self._state.pool.account_id(group, account),
             plugin.create_page,
-            self._runtime.make_apply_auth_fn(plugin, account),
         )
         page = self._state.browser_manager.acquire_tab(
             proxy_key,

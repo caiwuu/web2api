@@ -101,7 +101,7 @@ register_claude_plugin()
 - `AbstractPlugin`：最底层接口，协议无关。
 - `BaseSitePlugin`：假定 **Cookie 认证 + 站点内 SSE 流式**，子类只需实现 fetch*workspace、create_session、build_completion*\*、parse_sse_event 等。
 
-**问题**：若新站点是 Token 鉴权、或非 SSE（如 WebSocket、长轮询），没有对应的“第二基类”或 mixin，只能从 `AbstractPlugin` 从头实现，通用能力（如 `stream_completion_via_sse`、`apply_cookie_auth`）无法复用，扩展成本高。
+**问题**：若新站点是 Token 鉴权、或非 SSE（如 WebSocket、长轮询），没有对应的“第二基类”或 mixin，只能从 `AbstractPlugin` 从头实现，通用能力（如 `stream_completion_via_sse`）无法复用，扩展成本高。
 
 **建议**：
 

@@ -175,7 +175,9 @@ class ChatRequestExecutor:
                 )
                 async for chunk in stream:
                     yield chunk
-                yield session_id_suffix(session_id)  # 末尾零宽编码，供客户端解析 session
+                yield session_id_suffix(
+                    session_id
+                )  # 末尾零宽编码，供客户端解析 session
                 return
             except AccountFrozenError as exc:
                 logger.warning(
@@ -188,7 +190,7 @@ class ChatRequestExecutor:
                     if target is not None:
                         self._runtime.report_account_unfreeze(
                             target.group.fingerprint_id,
-                            target.account.name,
+                            type_name,
                             exc.unfreeze_at,
                         )
                         self._state.browser_manager.mark_tab_draining(

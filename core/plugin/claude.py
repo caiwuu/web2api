@@ -1,6 +1,6 @@
 """
 Claude 插件：仅实现站点特有的上下文获取、会话创建、请求体构建、SSE 解析和限流处理。
-其余编排逻辑（create_page / apply_auth / stream_completion 流程）全部由 BaseSitePlugin 完成。
+其余编排逻辑（create_page / stream_completion 流程）全部由 BaseSitePlugin 完成。
 调试时可在 config.yaml 的 claude.start_url、claude.api_base 指向 mock。
 """
 
@@ -17,10 +17,7 @@ from core.shared.models import InputAttachment
 from core.constants import TIMEZONE
 from core.plugin.base import BaseSitePlugin, PluginRegistry, SiteConfig
 from core.plugin.helpers import (
-    clear_cookies_for_domain,
-    clear_page_storage_for_switch,
     request_json_via_page_fetch,
-    safe_page_reload,
     upload_file_via_page_fetch,
 )
 
@@ -230,20 +227,6 @@ class ClaudePlugin(BaseSitePlugin):
         auth_keys=["sessionKey", "session_key"],
         config_section="claude",
     )
-
-    async def apply_auth(
-        self,
-        context: BrowserContext,
-        page: Page,
-        auth: dict[str, Any],
-        *,
-        reload: bool = True,
-    ) -> None:
-        await clear_cookies_for_domain(context, self.site.cookie_domain)
-        await clear_page_storage_for_switch(page)
-        await safe_page_reload(page, url=self.start_url)
-
-        await super().apply_auth(context, page, auth, reload=reload)
 
     # ---- 5 个必须实现的 hook ----
 

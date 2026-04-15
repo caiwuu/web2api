@@ -33,7 +33,6 @@ from core.runtime.keys import ProxyKey
 logger = logging.getLogger(__name__)
 
 CreatePageFn = Callable[[BrowserContext, Page | None], Coroutine[Any, Any, Page]]
-ApplyAuthFn = Callable[[BrowserContext, Page], Coroutine[Any, Any, None]]
 
 
 async def _wait_for_cdp(
@@ -437,7 +436,6 @@ class BrowserManager:
         type_name: str,
         account_id: str,
         create_page_fn: CreatePageFn,
-        apply_auth_fn: ApplyAuthFn,
     ) -> TabRuntime:
         """在指定浏览器中创建一个 type tab，并绑定到 account。"""
         context = await self.ensure_browser(proxy_key, proxy_pass)
@@ -453,14 +451,6 @@ class BrowserManager:
             context.pages[0] if (len(entry.tabs) == 0 and context.pages) else None
         )
         page = await create_page_fn(context, reuse_page)
-        try:
-            await apply_auth_fn(context, page)
-        except Exception:
-            try:
-                await page.close()
-            except Exception:
-                pass
-            raise
 
         tab = TabRuntime(
             type_name=type_name,
@@ -483,7 +473,6 @@ class BrowserManager:
         proxy_key: ProxyKey,
         type_name: str,
         account_id: str,
-        apply_auth_fn: ApplyAuthFn,
     ) -> bool:
         """
         在同一个 page 上切换账号。只有 drained 后（active_requests==0）才允许切号。
@@ -493,14 +482,6 @@ class BrowserManager:
             return False
         tab = entry.tabs.get(type_name)
         if tab is None or tab.active_requests != 0:
-            return False
-
-        tab.accepting_new = False
-        tab.state = "switching"
-        try:
-            await apply_auth_fn(entry.context, tab.page)
-        except Exception:
-            tab.state = "draining"
             return False
 
         tab.account_id = account_id

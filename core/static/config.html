@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>账号池配置</title>
+    <title>Identity 管理</title>
     <style>
       :root {
         --bg: #0f0f12;
         --surface: #18181c;
+        --surface-hover: #1e1e24;
         --border: #2a2a30;
         --text: #e4e4e7;
         --text-muted: #71717a;
@@ -15,1027 +16,337 @@
         --accent-hover: #2563eb;
         --danger: #ef4444;
         --danger-hover: #dc2626;
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --radius: 10px;
       }
-      * {
-        box-sizing: border-box;
-      }
+      * { box-sizing: border-box; margin: 0; }
       body {
-        font-family: ui-sans-serif, system-ui, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-        margin: 0;
-        padding: 24px;
-        line-height: 1.5;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        background: var(--bg); color: var(--text);
+        padding: 24px; line-height: 1.5;
       }
-      h1 {
-        font-size: 1.5rem;
-        margin: 0 0 24px;
-      }
+      h1 { font-size: 1.5rem; margin-bottom: 24px; }
+
+      /* toolbar */
       .toolbar {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 20px;
+        display: flex; align-items: center; gap: 12px;
+        margin-bottom: 20px; flex-wrap: wrap;
       }
       .btn {
-        padding: 8px 16px;
-        border-radius: 8px;
-        border: none;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
+        padding: 8px 16px; border-radius: 8px; border: none;
+        cursor: pointer; font-size: 14px; font-weight: 500;
+        transition: background .15s;
       }
-      .btn-primary {
-        background: var(--accent);
-        color: #fff;
+      .btn-primary { background: var(--accent); color: #fff; }
+      .btn-primary:hover { background: var(--accent-hover); }
+      .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+      .btn-secondary:hover { background: var(--surface-hover); }
+      .btn-danger { background: var(--danger); color: #fff; }
+      .btn-danger:hover { background: var(--danger-hover); }
+      .btn-sm { padding: 5px 12px; font-size: 13px; }
+      .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+      /* upload zone */
+      .upload-zone {
+        border: 2px dashed var(--border); border-radius: var(--radius);
+        padding: 32px; text-align: center; cursor: pointer;
+        transition: border-color .2s, background .2s;
+        margin-bottom: 24px; position: relative;
       }
-      .btn-primary:hover {
-        background: var(--accent-hover);
+      .upload-zone:hover, .upload-zone.dragover {
+        border-color: var(--accent); background: rgba(59,130,246,.06);
       }
-      .btn-ghost {
-        background: var(--surface);
-        color: var(--text);
-        border: 1px solid var(--border);
+      .upload-zone input[type="file"] {
+        position: absolute; inset: 0; opacity: 0; cursor: pointer;
       }
-      .btn-ghost:hover {
-        background: var(--border);
+      .upload-zone .icon { font-size: 2rem; margin-bottom: 8px; color: var(--text-muted); }
+      .upload-zone .label { font-size: 15px; color: var(--text-muted); }
+      .upload-zone .label strong { color: var(--accent); }
+
+      /* identity cards */
+      .identity-list { display: flex; flex-direction: column; gap: 12px; }
+      .identity-card {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 16px 20px;
+        display: flex; align-items: flex-start; gap: 16px;
+        transition: border-color .15s;
       }
-      .btn-danger {
-        background: var(--danger);
-        color: #fff;
+      .identity-card:hover { border-color: #3a3a42; }
+      .identity-card.disabled { opacity: .5; }
+      .identity-info { flex: 1; min-width: 0; }
+      .identity-header {
+        display: flex; align-items: center; gap: 10px;
+        margin-bottom: 6px; flex-wrap: wrap;
       }
-      .btn-danger:hover {
-        background: var(--danger-hover);
-      }
-      .msg {
-        position: fixed;
-        top: 16px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 1000;
-        padding: 12px 14px;
-        border-radius: 8px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-        max-width: 360px;
-        display: none;
-      }
-      .msg.success {
-        background: #14532d;
-        color: #bbf7d0;
-      }
-      .msg.error {
-        background: #7f1d1d;
-        color: #fecaca;
-      }
-      .group {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 16px;
-      }
-      .group h2 {
-        font-size: 1rem;
-        margin: 0;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        min-height: 40px;
-        line-height: 1;
-        padding: 2px 0;
-      }
-      .group h2 .label {
-        color: var(--text-muted);
-        font-weight: 600;
-      }
-      .row {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 12px;
-        margin-bottom: 12px;
-      }
-      .row.proxy-one-row {
-        grid-template-columns: 1fr 2fr 5fr 2fr 1fr 2fr;
-        gap: 10px;
-      }
-      @media (max-width: 900px) {
-        .row.proxy-one-row {
-          grid-template-columns: 1fr 1fr 1fr;
-        }
-      }
-      label {
-        display: block;
-        font-size: 12px;
-        color: var(--text-muted);
-        margin-bottom: 4px;
-      }
-      input,
-      textarea,
-      select {
-        width: 100%;
-        padding: 8px 12px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        background: var(--bg);
-        color: var(--text);
-        font-size: 14px;
-      }
-      textarea {
-        resize: vertical;
-        min-height: 56px;
+      .fingerprint-id {
+        font-size: 16px; font-weight: 600;
         font-family: ui-monospace, monospace;
       }
-      input:focus,
-      textarea:focus,
-      select:focus {
-        outline: none;
-        border-color: var(--accent);
+      .type-tag {
+        display: inline-block; padding: 2px 8px;
+        border-radius: 4px; font-size: 12px; font-weight: 500;
+        background: rgba(59,130,246,.15); color: var(--accent);
       }
-      .accounts {
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid var(--border);
+      .identity-meta {
+        font-size: 13px; color: var(--text-muted);
+        display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px;
       }
-      .accounts h3 {
-        font-size: 14px;
-        margin: 0 0 12px;
-        color: var(--text-muted);
+      .identity-actions {
+        display: flex; gap: 8px; align-items: center; flex-shrink: 0;
       }
-      .account {
-        background: var(--bg);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 12px;
-        padding-top: 44px;
-        margin-bottom: 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        position: relative;
+      .status-dot {
+        display: inline-block; width: 8px; height: 8px;
+        border-radius: 50%; margin-right: 4px; vertical-align: middle;
       }
-      .account-status-badge {
-        position: absolute;
-        top: 12px;
-        right: 12px;
-        display: inline-flex;
-        align-items: center;
-        padding: 4px 10px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
-        border: 1px solid transparent;
+      .status-dot.active { background: var(--success); }
+      .status-dot.idle { background: var(--text-muted); }
+      .status-dot.frozen { background: var(--warning); }
+      .frozen-time {
+        font-size: 11px; color: var(--warning);
+        margin-left: 2px; font-weight: 400;
+        font-family: ui-monospace, monospace;
       }
-      .account-status-badge.active {
-        background: #14532d;
-        color: #bbf7d0;
-        border-color: #166534;
+
+      /* toggle */
+      .toggle {
+        position: relative; width: 40px; height: 22px;
+        background: var(--border); border-radius: 11px;
+        cursor: pointer; transition: background .2s; flex-shrink: 0;
       }
-      .account-status-badge.frozen {
-        background: #7f1d1d;
-        color: #fecaca;
-        border-color: #991b1b;
+      .toggle.on { background: var(--accent); }
+      .toggle::after {
+        content: ''; position: absolute; top: 2px; left: 2px;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #fff; transition: transform .2s;
       }
-      .account-status-badge.disabled {
-        background: #27272a;
-        color: #d4d4d8;
-        border-color: #3f3f46;
+      .toggle.on::after { transform: translateX(18px); }
+
+      /* toast */
+      .toast {
+        position: fixed; bottom: 24px; right: 24px;
+        padding: 12px 20px; border-radius: 8px;
+        font-size: 14px; z-index: 999;
+        opacity: 0; transform: translateY(8px);
+        transition: opacity .3s, transform .3s;
+        pointer-events: none;
       }
-      .account-status-badge.idle {
-        background: #1f2937;
-        color: #cbd5e1;
-        border-color: #334155;
+      .toast.show { opacity: 1; transform: translateY(0); }
+      .toast.success { background: var(--success); color: #fff; }
+      .toast.error { background: var(--danger); color: #fff; }
+
+      /* empty state */
+      .empty-state {
+        text-align: center; padding: 48px 24px;
+        color: var(--text-muted); font-size: 15px;
       }
-      .account .account-row1 {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: flex-end;
+
+      /* spinner */
+      .spinner {
+        display: inline-block; width: 16px; height: 16px;
+        border: 2px solid rgba(255,255,255,.3);
+        border-top-color: #fff; border-radius: 50%;
+        animation: spin .6s linear infinite; margin-right: 6px;
+        vertical-align: middle;
       }
-      .account .account-row1 .f {
-        min-width: 120px;
-      }
-      .account .account-row1 .f.name {
-        max-width: 160px;
-        min-width: 100px;
-      }
-      .account .account-row1 .f.type {
-        min-width: 120px;
-      }
-      .account .account-row1 .f.enabled {
-        min-width: 110px;
-      }
-      .account .account-row1 .f.freeze-time {
-        min-width: 220px;
-      }
-      .account .account-row2 {
-        width: 100%;
-      }
-      .account .account-row2 .f {
-        width: 100%;
-      }
-      .account .f label {
-        margin-bottom: 2px;
-      }
-      .account .f input,
-      .account .f textarea,
-      .account .f select {
-        padding: 6px 10px;
-        font-size: 13px;
-      }
-      .account .f input[readonly] {
-        color: var(--text-muted);
-        cursor: default;
-      }
-      .account .toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        height: 34px;
-        color: var(--text);
-        margin: 0;
-      }
-      .account .toggle input {
-        width: auto;
-        margin: 0;
-      }
-      .account .actions {
-        flex-shrink: 0;
-      }
-      .search-row {
-        margin-bottom: 16px;
-      }
-      .search-row input {
-        max-width: 320px;
-      }
-      .stats {
-        font-size: 13px;
-        color: var(--text-muted);
-        margin-bottom: 16px;
-      }
-      .hint {
-        background: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 12px;
-        padding: 14px 16px;
-        margin-bottom: 16px;
-        color: #d1d5db;
-        font-size: 13px;
-      }
-      .hint strong {
-        color: #f9fafb;
-      }
-      .warn {
-        background: #3f1600;
-        border: 1px solid #7c2d12;
-        color: #fed7aa;
-        border-radius: 10px;
-        padding: 10px 12px;
-        margin-bottom: 12px;
-        font-size: 13px;
-      }
-      .group-header {
-        cursor: pointer;
-        user-select: none;
-      }
-      .group-header:hover {
-        color: var(--accent);
-      }
-      .group-header .chevron {
-        display: inline-flex;
-        align-items: center;
-        margin-right: 8px;
-        transition: transform 0.2s;
-      }
-      .group-header.collapsed .chevron {
-        transform: rotate(-90deg);
-      }
-      .group.collapsed .group-body {
-        display: none;
-      }
-      .group.collapsed .accounts {
-        display: none;
-      }
-      .btn-sm {
-        padding: 6px 12px;
-        font-size: 13px;
-      }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
-    <h1>Account Pool Configuration</h1>
-    <div id="msg"></div>
+    <h1>Identity 管理</h1>
+
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" accept=".zip" id="fileInput" />
+      <div class="icon">&#x1F4E6;</div>
+      <div class="label">拖拽 identity zip 文件到此处，或 <strong>点击选择</strong></div>
+    </div>
+
     <div class="toolbar">
-      <button type="button" class="btn btn-primary" id="addGroup">Add Proxy Group</button>
-      <button type="button" class="btn btn-ghost" id="load">Reload</button>
-      <button type="button" class="btn btn-primary" id="save">Save Config</button>
-      <button type="button" class="btn btn-ghost" id="logout">Logout</button>
+      <button class="btn btn-secondary" id="scanBtn">扫描目录</button>
+      <button class="btn btn-secondary" id="refreshBtn">刷新</button>
+      <span id="uploadStatus" style="font-size:13px;color:var(--text-muted)"></span>
     </div>
-    <div class="search-row">
-      <label>Search (proxy host/user or account name/type)</label>
-      <input type="text" id="search" placeholder="Enter keyword to filter..." />
+
+    <div id="identityList" class="identity-list">
+      <div class="empty-state">加载中...</div>
     </div>
-    <div class="hint">
-      <strong>Network mode:</strong>
-      勾选“使用代理”表示浏览器通过代理出口访问；取消勾选表示直连，直接使用当前机器自身 IP。
-      直连模式下不要在同一个组里配置大量账号，否则站点很容易识别为“同一 IP
-      下多个账号”，导致风控甚至封 IP。<br />
-      When "Use proxy" is checked, the browser accesses the site via the proxy; when unchecked, it
-      uses this machine's own IP. Do NOT put many accounts in one direct-connection group, or the
-      site may treat them as multiple accounts under the same IP and trigger risk control or IP ban.
-    </div>
-    <div class="stats" id="stats"></div>
-    <div id="list"></div>
+
+    <div class="toast" id="toast"></div>
 
     <script>
-      const API = '/api/config'
-      const STATUS_API = '/api/config/status'
-      const TYPES_API = '/api/types'
-      let registeredTypes = ['claude']
-      let runtimeStatus = {}
-      let runtimeNow = null
+      const $ = s => document.querySelector(s);
+      const API = {
+        list: () => fetch('/api/identities').then(r => r.json()),
+        upload: f => {
+          const fd = new FormData();
+          fd.append('file', f);
+          return fetch('/api/identities/upload', { method: 'POST', body: fd }).then(r => r.json().then(d => ({ ok: r.ok, data: d })));
+        },
+        del: id => fetch(`/api/identities/${id}`, { method: 'DELETE' }).then(r => r.json()),
+        patch: (id, body) => fetch(`/api/identities/${id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }).then(r => r.json()),
+        scan: () => fetch('/api/identities/scan', { method: 'POST' }).then(r => r.json()),
+      };
 
-      // 全球时区列表：优先使用 Intl.supportedValuesOf，否则用静态列表
-      const TIMEZONES = (() => {
-        if (typeof Intl !== 'undefined' && Intl.supportedValuesOf) {
-          try {
-            return Intl.supportedValuesOf('timeZone').sort()
-          } catch (_) {}
+      function toast(msg, type = 'success') {
+        const el = $('#toast');
+        el.textContent = msg;
+        el.className = 'toast ' + type + ' show';
+        clearTimeout(el._t);
+        el._t = setTimeout(() => el.classList.remove('show'), 3000);
+      }
+
+      function formatFrozenUntil(frozenUntil, now) {
+        if (!frozenUntil || frozenUntil <= now) return '';
+        const remaining = frozenUntil - now;
+        if (remaining <= 0) return '';
+        const h = Math.floor(remaining / 3600);
+        const m = Math.floor((remaining % 3600) / 60);
+        const s = remaining % 60;
+        let parts = [];
+        if (h > 0) parts.push(h + 'h');
+        if (m > 0) parts.push(m + 'm');
+        if (h === 0) parts.push(s + 's');
+        return parts.join('');
+      }
+
+      function renderIdentities(data) {
+        const list = $('#identityList');
+        const identities = data.identities || [];
+        const now = data.now || Math.floor(Date.now() / 1000);
+        if (!identities.length) {
+          list.innerHTML = '<div class="empty-state">暂无 identity，请上传 zip 文件或点击"扫描目录"</div>';
+          return;
         }
-        return [
-          'Africa/Cairo',
-          'Africa/Johannesburg',
-          'Africa/Lagos',
-          'Africa/Nairobi',
-          'Africa/Tunis',
-          'America/Argentina/Buenos_Aires',
-          'America/Bogota',
-          'America/Chicago',
-          'America/Denver',
-          'America/Lima',
-          'America/Los_Angeles',
-          'America/Mexico_City',
-          'America/New_York',
-          'America/Santiago',
-          'America/Sao_Paulo',
-          'America/Toronto',
-          'America/Vancouver',
-          'Asia/Bangkok',
-          'Asia/Colombo',
-          'Asia/Dubai',
-          'Asia/Ho_Chi_Minh',
-          'Asia/Hong_Kong',
-          'Asia/Jakarta',
-          'Asia/Jerusalem',
-          'Asia/Karachi',
-          'Asia/Kolkata',
-          'Asia/Manila',
-          'Asia/Seoul',
-          'Asia/Shanghai',
-          'Asia/Singapore',
-          'Asia/Taipei',
-          'Asia/Tehran',
-          'Asia/Tokyo',
-          'Australia/Adelaide',
-          'Australia/Melbourne',
-          'Australia/Perth',
-          'Australia/Sydney',
-          'Europe/Amsterdam',
-          'Europe/Athens',
-          'Europe/Berlin',
-          'Europe/Istanbul',
-          'Europe/London',
-          'Europe/Madrid',
-          'Europe/Moscow',
-          'Europe/Paris',
-          'Europe/Rome',
-          'Europe/Stockholm',
-          'Pacific/Auckland',
-          'Pacific/Fiji',
-          'Pacific/Guam',
-          'Pacific/Honolulu',
-          'UTC',
-        ].sort()
-      })()
-
-      async function apiFetch(url, options = {}) {
-        const res = await fetch(url, options)
-        if (res.status === 401) {
-          window.location.href = '/login'
-          throw new Error('登录已失效，请重新登录')
-        }
-        return res
-      }
-
-      async function loadTypes() {
-        try {
-          const res = await apiFetch(TYPES_API)
-          if (res.ok) {
-            const list = await res.json()
-            if (Array.isArray(list) && list.length) registeredTypes = list
-          }
-        } catch (_) {}
-      }
-
-      function showMsg(text, type = 'success') {
-        const el = document.getElementById('msg')
-        el.className = 'msg ' + type
-        el.textContent = text
-        el.style.display = 'block'
-        setTimeout(() => {
-          el.style.display = 'none'
-        }, 4000)
-      }
-
-      function confirmDelete(message) {
-        return window.confirm(message)
-      }
-
-      async function loadConfig() {
-        const res = await apiFetch(API)
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
-      }
-
-      async function loadStatus() {
-        const res = await apiFetch(STATUS_API)
-        if (!res.ok) throw new Error(await res.text())
-        return res.json()
-      }
-
-      function escapeAttr(s) {
-        if (s == null) return ''
-        return String(s)
-          .replace(/&/g, '&amp;')
-          .replace(/"/g, '&quot;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-      }
-
-      function authToStr(auth) {
-        if (auth == null || typeof auth !== 'object') return '{}'
-        try {
-          return JSON.stringify(auth, null, 2)
-        } catch {
-          return '{}'
-        }
-      }
-
-      function parseAuth(s) {
-        if (typeof s !== 'string' || !s.trim()) return {}
-        try {
-          const o = JSON.parse(s)
-          return typeof o === 'object' && o !== null ? o : {}
-        } catch {
-          return {}
-        }
-      }
-
-      function asUnix(value) {
-        if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
-        if (typeof value === 'string' && value.trim()) {
-          const n = Number(value)
-          if (Number.isFinite(n)) return Math.trunc(n)
-        }
-        return null
-      }
-
-      function formatDateTime(value) {
-        const ts = asUnix(value)
-        if (ts == null || ts <= 0) return '-'
-        try {
-          return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false })
-        } catch (_) {
-          return String(ts)
-        }
-      }
-
-      function applyRuntimeStatus(payload) {
-        runtimeStatus = (payload && payload.accounts) || {}
-        runtimeNow =
-          payload && typeof payload.now === 'number' ? payload.now : Math.trunc(Date.now() / 1000)
-      }
-
-      function accountId(group, acc) {
-        return `${group.fingerprint_id || ''}:${acc.name || ''}`
-      }
-
-      function getAccountBadge(group, acc) {
-        const enabled = acc.enabled !== false
-        const runtime = runtimeStatus[accountId(group, acc)] || null
-        const isActive = !!(runtime && runtime.is_active)
-        const unfreezeAt = asUnix(
-          runtime && runtime.unfreeze_at != null ? runtime.unfreeze_at : acc.unfreeze_at
-        )
-        const now = runtimeNow || Math.trunc(Date.now() / 1000)
-        const isFrozen = unfreezeAt != null && unfreezeAt > now
-        if (!enabled) return { className: 'disabled', text: 'disabled' }
-        if (isActive) return { className: 'active', text: 'active' }
-        if (isFrozen) return { className: 'frozen', text: 'frozen' }
-        return { className: 'idle', text: 'idle' }
-      }
-
-      function renderAccount(acc, accIndex, group, onRemove, onChange) {
-        const currentType = acc.type || 'claude'
-        const typeOptions = registeredTypes.includes(currentType)
-          ? registeredTypes
-          : [currentType].concat(registeredTypes)
-        const selectOpts = typeOptions
-          .map(
-            (t) =>
-              `<option value="${escapeAttr(t)}" ${t === currentType ? 'selected' : ''}>${escapeAttr(
-                t
-              )}</option>`
-          )
-          .join('')
-        const badge = getAccountBadge(group, acc)
-        const div = document.createElement('div')
-        div.className = 'account'
-        div.dataset.accountIndex = String(accIndex)
-        div.innerHTML = `
-          <div class="account-status-badge ${badge.className}">${badge.text}</div>
-          <div class="account-row1">
-            <div class="f name"><label>name</label><input type="text" data-k="name" value="${escapeAttr(
-              acc.name
-            )}" placeholder="claude-01" /></div>
-            <div class="f type"><label>type</label><select data-k="type">${selectOpts}</select></div>
-            <div class="f enabled">
-              <label>enabled</label>
-              <label class="toggle">
-                <input type="checkbox" data-k="enabled" ${acc.enabled !== false ? 'checked' : ''} />
-                <span>enabled</span>
-              </label>
-            </div>
-            <div class="f freeze-time"><label>unfreeze_at</label><input type="text" data-k="unfreeze_at_display" value="${escapeAttr(
-              formatDateTime(acc.unfreeze_at)
-            )}" readonly /></div>
-            <div class="actions"><button type="button" class="btn btn-danger btn-sm">Delete</button></div>
-          </div>
-          <div class="account-row2">
-            <div class="f"><label>auth (JSON)</label><textarea data-k="auth" placeholder='{"sessionKey": "..."}' rows="2">${escapeAttr(
-              authToStr(acc.auth)
-            )}</textarea></div>
-          </div>
-        `
-        div.querySelector('[data-k="name"]').oninput = (e) =>
-          onChange(accIndex, 'name', e.target.value)
-        div.querySelector('[data-k="type"]').onchange = (e) =>
-          onChange(accIndex, 'type', e.target.value)
-        div.querySelector('[data-k="enabled"]').onchange = (e) =>
-          onChange(accIndex, 'enabled', e.target.checked, true)
-        div.querySelector('[data-k="auth"]').oninput = (e) =>
-          onChange(accIndex, 'auth', e.target.value)
-        div.querySelector('.btn-danger').onclick = () => onRemove(accIndex)
-        return div
-      }
-
-      const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
-      const DEFAULT_PAGE_SIZE = 20
-      let groupCollapsed = {}
-      let groupPage = {}
-      let groupPageSize = {}
-
-      function groupKey(group, index) {
-        const h = (group.proxy_host || '').trim()
-        const u = (group.proxy_user || '').trim()
-        return h || u ? `${h}|${u}` : `idx-${index}`
-      }
-
-      function filterConfig(cfg, search) {
-        const q = (search || '').trim().toLowerCase()
-        if (!q) return cfg.map((g, i) => ({ group: g, groupIndex: i, accountIndices: null }))
-        const result = []
-        cfg.forEach((g, gi) => {
-          const matchHost = (g.proxy_host || '').toLowerCase().includes(q)
-          const matchUser = (g.proxy_user || '').toLowerCase().includes(q)
-          const allAccounts = g.accounts || []
-          const accountIndices = allAccounts
-            .map((_, i) => i)
-            .filter((i) => {
-              const a = allAccounts[i]
-              return (
-                (a.name || '').toLowerCase().includes(q) || (a.type || '').toLowerCase().includes(q)
-              )
-            })
-          if (matchHost || matchUser || accountIndices.length > 0) {
-            result.push({
-              group: g,
-              groupIndex: gi,
-              accountIndices: accountIndices.length ? accountIndices : null,
-            })
-          }
-        })
-        return result
-      }
-
-      function renderGroup(
-        group,
-        groupIndex,
-        config,
-        onRemoveGroup,
-        onAddAccount,
-        onRemoveAccount,
-        onAccountChange,
-        onGroupChange,
-        opts
-      ) {
-        const key = (k, def = '') => (group[k] != null && group[k] !== '' ? group[k] : def)
-        const useProxy = group.use_proxy !== false
-        const gkey = groupKey(group, groupIndex)
-        const allAccounts = group.accounts || []
-        const indices = opts.accountIndices || allAccounts.map((_, i) => i)
-        const totalCount = indices.length
-        const isCollapsed = groupCollapsed[gkey] === true
-        const pageSize = groupPageSize[gkey] || DEFAULT_PAGE_SIZE
-        const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
-        const currentPage = Math.min(groupPage[gkey] || 0, totalPages - 1)
-        const start = currentPage * pageSize
-        const pageIndices = indices.slice(start, start + pageSize)
-        const pageAccounts = pageIndices.map((i) => allAccounts[i])
-
-        const div = document.createElement('div')
-        div.className = 'group' + (isCollapsed ? ' collapsed' : '')
-        div.dataset.groupIndex = String(groupIndex)
-        div.innerHTML = `
-          <h2 class="group-header ${isCollapsed ? 'collapsed' : ''}" data-action="toggle">
-            <span>
-              <span class="chevron">▼</span>
-              <span class="label">Proxy Group ${groupIndex + 1}</span>
-              <span class="label" style="margin-left:8px;font-weight:400">${
-                useProxy ? group.proxy_host || 'Proxy not set' : 'Direct connection'
-              } · ${allAccounts.length} accounts</span>
-            </span>
-            <span onclick="event.stopPropagation()">
-              <button type="button" class="btn btn-ghost btn-sm" data-action="add-account">Add account</button>
-              <button type="button" class="btn btn-danger btn-sm" data-action="remove-group">Delete this group</button>
-            </span>
-          </h2>
-          <div class="group-body">
-            ${
-              useProxy
-                ? ''
-                : `<div class="warn">当前为直连模式：浏览器直接使用这台机器的出口 IP。请勿在同一个直连组下堆很多账号，否则容易被识别为同一 IP 下多账号，导致账号关联或 IP 被封。<br />Current group is in direct-connection mode: the browser uses this machine's exit IP directly. Do NOT put many accounts in the same direct group, otherwise the site may link the accounts by IP and even block the IP.</div>`
-            }
-            <div class="row proxy-one-row">
-              <div>
-                <label>network_mode</label>
-                <label style="display:flex;align-items:center;gap:8px;height:38px;margin:0;color:var(--text)">
-                  <input type="checkbox" data-k="use_proxy" ${
-                    useProxy ? 'checked' : ''
-                  } style="width:auto" />
-                  <span>Use proxy</span>
-                </label>
+        list.innerHTML = identities.map(i => {
+          const typeTags = i.types.map(t => {
+            const st = (i.type_statuses || {})[t] || {};
+            let dotClass = 'idle';
+            if (st.tab_state === 'frozen') dotClass = 'frozen';
+            else if (st.is_active) dotClass = 'active';
+            const frozenLabel = formatFrozenUntil(st.frozen_until, now);
+            const frozenHtml = frozenLabel ? `<span class="frozen-time">${frozenLabel}</span>` : '';
+            return `<span class="type-tag"><span class="status-dot ${dotClass}"></span>${esc(t)}${frozenHtml}</span>`;
+          }).join(' ');
+          return `
+            <div class="identity-card ${i.enabled ? '' : 'disabled'}" data-id="${esc(i.fingerprint_id)}">
+              <div class="identity-info">
+                <div class="identity-header">
+                  <span class="fingerprint-id">${esc(i.fingerprint_id)}</span>
+                  ${typeTags}
+                </div>
+                <div class="identity-meta">
+                  <span>${esc(i.timezone)}</span>
+                  <span>${esc(i.proxy_url)}</span>
+                </div>
               </div>
-              <div><label>proxy_host</label><input type="text" data-k="proxy_host" value="${escapeAttr(
-                key('proxy_host')
-              )}" placeholder="sg.arxlabs.io:3010" ${useProxy ? '' : 'disabled'} /></div>
-              <div><label>proxy_user</label><input type="text" data-k="proxy_user" value="${escapeAttr(
-                key('proxy_user')
-              )}" placeholder="Proxy username" ${useProxy ? '' : 'disabled'} /></div>
-              <div><label>proxy_pass</label><input type="text" data-k="proxy_pass" value="${escapeAttr(
-                key('proxy_pass')
-              )}" placeholder="Proxy password" ${useProxy ? '' : 'disabled'} /></div>
-              <div><label>fingerprint_id</label><input type="text" data-k="fingerprint_id" value="${escapeAttr(
-                key('fingerprint_id')
-              )}" placeholder="4567" /></div>
-              <div><label>timezone</label><select data-k="timezone">${(function () {
-                const val = key('timezone') || 'America/Chicago'
-                const opts = TIMEZONES.includes(val) ? TIMEZONES : [val, ...TIMEZONES].sort()
-                return opts
-                  .map(
-                    (tz) =>
-                      `<option value="${escapeAttr(tz)}" ${
-                        tz === val ? 'selected' : ''
-                      }>${escapeAttr(tz)}</option>`
-                  )
-                  .join('')
-              })()}</select></div>
-            </div>
-            <div class="accounts">
-              <h3>Accounts (name / type / auth JSON, e.g. {"sessionKey": "xxx"} for Claude)</h3>
-              <div class="accounts-list"></div>
-              ${
-                totalPages > 1
-                  ? `
-              <div class="pagination" style="margin-top:12px;display:flex;align-items:center;gap:12px;">
-                <span class="info" style="font-size:13px;color:var(--text-muted)">第 ${
-                  currentPage + 1
-                } / ${totalPages} pages, ${totalCount} accounts</span>
-                <select data-action="page-size">
-                  ${PAGE_SIZE_OPTIONS.map(
-                    (n) =>
-                      `<option value="${n}" ${
-                        n === pageSize ? 'selected' : ''
-                      }>${n} accounts/page</option>`
-                  ).join('')}
-                </select>
-                <button type="button" class="btn btn-ghost btn-sm" data-action="prev" ${
-                  currentPage <= 0 ? 'disabled' : ''
-                }>Previous page</button>
-                <button type="button" class="btn btn-ghost btn-sm" data-action="next" ${
-                  currentPage >= totalPages - 1 ? 'disabled' : ''
-                }>Next page</button>
+              <div class="identity-actions">
+                <div class="toggle ${i.enabled ? 'on' : ''}"
+                     onclick="toggleEnabled('${esc(i.fingerprint_id)}', ${!i.enabled})"
+                     title="${i.enabled ? '点击禁用' : '点击启用'}"></div>
+                <button class="btn btn-danger btn-sm"
+                        onclick="deleteIdentity('${esc(i.fingerprint_id)}')">删除</button>
               </div>
-              `
-                  : ''
-              }
-            </div>
-          </div>
-        `
-
-        div.querySelector('[data-action="toggle"]').onclick = () => {
-          groupCollapsed[gkey] = !groupCollapsed[gkey]
-          opts.rerender()
-        }
-        ;['proxy_host', 'proxy_user', 'proxy_pass', 'fingerprint_id'].forEach((k) => {
-          const el = div.querySelector(`[data-k="${k}"]`)
-          if (el) el.oninput = (e) => onGroupChange(groupIndex, k, e.target.value)
-        })
-        const useProxyEl = div.querySelector('[data-k="use_proxy"]')
-        if (useProxyEl)
-          useProxyEl.onchange = (e) =>
-            onGroupChange(groupIndex, 'use_proxy', e.target.checked, true)
-        const tzEl = div.querySelector('[data-k="timezone"]')
-        if (tzEl) tzEl.onchange = (e) => onGroupChange(groupIndex, 'timezone', e.target.value)
-        div.querySelector('[data-action="add-account"]').onclick = () => onAddAccount(groupIndex)
-        div.querySelector('[data-action="remove-group"]').onclick = () => onRemoveGroup(groupIndex)
-        const ps = div.querySelector('[data-action="page-size"]')
-        if (ps)
-          ps.onchange = (e) => {
-            groupPageSize[gkey] = Number(e.target.value)
-            groupPage[gkey] = 0
-            opts.rerender()
-          }
-        const prev = div.querySelector('[data-action="prev"]')
-        if (prev)
-          prev.onclick = () => {
-            if (currentPage > 0) {
-              groupPage[gkey] = currentPage - 1
-              opts.rerender()
-            }
-          }
-        const next = div.querySelector('[data-action="next"]')
-        if (next)
-          next.onclick = () => {
-            if (currentPage < totalPages - 1) {
-              groupPage[gkey] = currentPage + 1
-              opts.rerender()
-            }
-          }
-
-        const list = div.querySelector('.accounts-list')
-        pageAccounts.forEach((acc, localIndex) => {
-          const globalIndex = pageIndices[localIndex]
-          list.appendChild(
-            renderAccount(
-              acc,
-              globalIndex,
-              group,
-              onRemoveAccount.bind(null, groupIndex),
-              onAccountChange.bind(null, groupIndex)
-            )
-          )
-        })
-        return div
+            </div>`;
+        }).join('');
       }
 
-      function getConfigFromForm() {
-        return (config || [])
-          .map((group) => ({
-            use_proxy: group.use_proxy !== false,
-            proxy_host: (group.proxy_host || '').trim(),
-            proxy_user: (group.proxy_user || '').trim(),
-            proxy_pass: (group.proxy_pass || '').trim(),
-            fingerprint_id: (group.fingerprint_id || '').trim(),
-            timezone: (group.timezone || '').trim() || undefined,
-            accounts: (group.accounts || [])
-              .map((acc) => {
-                const name = (acc.name || '').trim()
-                if (!name) return null
-                const normalized = {
-                  name,
-                  type: (acc.type || 'claude').trim() || 'claude',
-                  auth: typeof acc.auth === 'string' ? parseAuth(acc.auth) : acc.auth || {},
-                  enabled: acc.enabled !== false,
-                }
-                const unfreezeAt = asUnix(acc.unfreeze_at)
-                if (unfreezeAt != null) normalized.unfreeze_at = unfreezeAt
-                return normalized
-              })
-              .filter(Boolean),
-          }))
-          .filter((group) => group.accounts.length)
+      function esc(s) {
+        if (s == null) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
       }
 
-      let config = []
-
-      function updateAccountStatusBadges() {
-        document.querySelectorAll('.group').forEach((groupEl) => {
-          const groupIndex = Number(groupEl.dataset.groupIndex)
-          const group = config[groupIndex]
-          if (!group) return
-          groupEl.querySelectorAll('.account').forEach((accEl) => {
-            const accountIndex = Number(accEl.dataset.accountIndex)
-            const acc = (group.accounts || [])[accountIndex]
-            if (!acc) return
-            const badge = getAccountBadge(group, acc)
-            const badgeEl = accEl.querySelector('.account-status-badge')
-            if (badgeEl) {
-              badgeEl.className = `account-status-badge ${badge.className}`
-              badgeEl.textContent = badge.text
-            }
-            const unfreezeEl = accEl.querySelector('[data-k="unfreeze_at_display"]')
-            if (unfreezeEl) {
-              const runtime = runtimeStatus[accountId(group, acc)] || null
-              const value =
-                runtime && runtime.unfreeze_at != null ? runtime.unfreeze_at : acc.unfreeze_at
-              unfreezeEl.value = formatDateTime(value)
-            }
-          })
-        })
-      }
-
-      function render(configData) {
-        config = JSON.parse(JSON.stringify(configData))
-        const searchText =
-          (document.getElementById('search') && document.getElementById('search').value) || ''
-        const filtered = filterConfig(config, searchText)
-        const list = document.getElementById('list')
-        list.innerHTML = ''
-
-        const totalGroups = config.length
-        const totalAccounts = config.reduce((n, g) => n + (g.accounts || []).length, 0)
-        const statsEl = document.getElementById('stats')
-        if (statsEl) {
-          statsEl.textContent = searchText.trim()
-            ? `Total ${totalGroups} groups, ${totalAccounts} accounts (filtered ${filtered.length} groups)`
-            : `Total ${totalGroups} groups, ${totalAccounts} accounts`
-        }
-
-        function rerender() {
-          render(config)
-        }
-        function onGroupChange(gi, k, v, shouldRerender = false) {
-          if (config[gi]) config[gi][k] = v
-          if (shouldRerender) rerender()
-        }
-        function onAddAccount(gi) {
-          if (!config[gi].accounts) config[gi].accounts = []
-          config[gi].accounts.push({
-            name: '',
-            type: 'claude',
-            auth: {},
-            enabled: true,
-            unfreeze_at: null,
-          })
-          rerender()
-        }
-        function onRemoveAccount(gi, ai) {
-          const acc = config[gi] && config[gi].accounts ? config[gi].accounts[ai] : null
-          const accountName = (acc && acc.name && acc.name.trim()) || `#${ai + 1}`
-          if (
-            !confirmDelete(
-              `确认删除账号 ${accountName} 吗？\nAre you sure you want to delete account ${accountName}?`
-            )
-          ) {
-            return
-          }
-          config[gi].accounts.splice(ai, 1)
-          rerender()
-        }
-        function onAccountChange(gi, ai, k, v) {
-          if (config[gi].accounts[ai]) {
-            if (k === 'auth') config[gi].accounts[ai].auth = parseAuth(v)
-            else config[gi].accounts[ai][k] = v
-            if (k === 'enabled') rerender()
-          }
-        }
-        function onRemoveGroup(gi) {
-          const group = config[gi] || {}
-          const groupName =
-            (group.proxy_host && group.proxy_host.trim()) ||
-            (group.proxy_user && group.proxy_user.trim()) ||
-            `#${gi + 1}`
-          const accountCount = ((group.accounts || []).length || 0).toString()
-          if (
-            !confirmDelete(
-              `确认删除代理组 ${groupName} 吗？这会同时删除组内 ${accountCount} 个账号。\nAre you sure you want to delete proxy group ${groupName}? This will also delete ${accountCount} account(s) in the group.`
-            )
-          ) {
-            return
-          }
-          config.splice(gi, 1)
-          rerender()
-        }
-
-        filtered.forEach(({ group, groupIndex, accountIndices }) => {
-          list.appendChild(
-            renderGroup(
-              group,
-              groupIndex,
-              config,
-              onRemoveGroup,
-              onAddAccount,
-              onRemoveAccount,
-              onAccountChange,
-              onGroupChange,
-              { rerender, accountIndices }
-            )
-          )
-        })
-        updateAccountStatusBadges()
-      }
-
-      document.getElementById('addGroup').onclick = () => {
-        config.push({
-          use_proxy: true,
-          proxy_host: '',
-          proxy_user: '',
-          proxy_pass: '',
-          fingerprint_id: '',
-          timezone: 'America/Chicago',
-          accounts: [{ name: '', type: 'claude', auth: {}, enabled: true, unfreeze_at: null }],
-        })
-        render(config)
-      }
-
-      document.getElementById('load').onclick = async () => {
+      async function loadList() {
         try {
-          await loadTypes()
-          const [data, status] = await Promise.all([
-            loadConfig(),
-            loadStatus().catch(() => ({ accounts: {}, now: Math.trunc(Date.now() / 1000) })),
-          ])
-          applyRuntimeStatus(status)
-          render(data)
-          showMsg('已加载 / Loaded')
+          const data = await API.list();
+          renderIdentities(data);
         } catch (e) {
-          showMsg('加载失败 / Load failed: ' + e.message, 'error')
+          toast('加载失败: ' + e.message, 'error');
         }
       }
 
-      document.getElementById('save').onclick = async () => {
-        const toSave = getConfigFromForm()
-        if (!toSave.length) {
-          showMsg(
-            '请至少保留一个代理组且每组至少一个账号 / Please keep at least one proxy group and at least one account in each group',
-            'error'
-          )
-          return
+      async function handleUpload(file) {
+        if (!file || !file.name.toLowerCase().endsWith('.zip')) {
+          toast('请选择 .zip 文件', 'error');
+          return;
         }
+        const status = $('#uploadStatus');
+        status.innerHTML = '<span class="spinner"></span>上传中...';
         try {
-          const res = await apiFetch(API, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(toSave),
-          })
-          const text = await res.text()
-          if (!res.ok) throw new Error(text || res.statusText)
-          showMsg('保存成功并已生效 / Saved successfully and applied')
-          const [cfg, status] = await Promise.all([
-            loadConfig(),
-            loadStatus().catch(() => ({ accounts: {}, now: Math.trunc(Date.now() / 1000) })),
-          ])
-          applyRuntimeStatus(status)
-          render(cfg)
+          const { ok, data } = await API.upload(file);
+          if (ok) {
+            toast(`已安装 ${data.fingerprint_id}，支持: ${data.types.join(', ')}`);
+            await loadList();
+          } else {
+            toast(data.detail || '上传失败', 'error');
+          }
         } catch (e) {
-          showMsg('保存失败 / Save failed: ' + e.message, 'error')
+          toast('上传失败: ' + e.message, 'error');
         }
-      }
-      document.getElementById('logout').onclick = async () => {
-        try {
-          await fetch('/api/admin/logout', { method: 'POST' })
-        } catch (_) {}
-        window.location.href = '/login'
+        status.textContent = '';
       }
 
-      let searchDebounce
-      document.getElementById('search').oninput = () => {
-        clearTimeout(searchDebounce)
-        searchDebounce = setTimeout(() => render(config), 200)
-      }
-      ;(async () => {
-        await loadTypes()
+      async function deleteIdentity(id) {
+        if (!confirm(`确认删除 identity ${id}？`)) return;
         try {
-          const [data, status] = await Promise.all([
-            loadConfig(),
-            loadStatus().catch(() => ({ accounts: {}, now: Math.trunc(Date.now() / 1000) })),
-          ])
-          applyRuntimeStatus(status)
-          render(data)
+          await API.del(id);
+          toast('已删除');
+          await loadList();
         } catch (e) {
-          render([])
-          showMsg(
-            '未加载到配置，可新建后保存 / No config loaded, you can create a new one and save it',
-            'error'
-          )
+          toast('删除失败: ' + e.message, 'error');
         }
-      })()
-      setInterval(async () => {
+      }
+
+      async function toggleEnabled(id, enabled) {
         try {
-          applyRuntimeStatus(await loadStatus())
-          updateAccountStatusBadges()
-        } catch (_) {}
-      }, 15000)
+          await API.patch(id, { enabled });
+          await loadList();
+        } catch (e) {
+          toast('操作失败: ' + e.message, 'error');
+        }
+      }
+
+      // upload zone
+      const zone = $('#uploadZone');
+      const fileInput = $('#fileInput');
+      zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+      zone.addEventListener('drop', e => {
+        e.preventDefault(); zone.classList.remove('dragover');
+        const f = e.dataTransfer.files[0];
+        if (f) handleUpload(f);
+      });
+      fileInput.addEventListener('change', () => {
+        const f = fileInput.files[0];
+        if (f) handleUpload(f);
+        fileInput.value = '';
+      });
+
+      // scan
+      $('#scanBtn').addEventListener('click', async () => {
+        const btn = $('#scanBtn');
+        btn.disabled = true; btn.textContent = '扫描中...';
+        try {
+          const data = await API.scan();
+          if (data.registered && data.registered.length) {
+            toast(`发现并注册 ${data.registered.length} 个 identity`);
+          } else {
+            toast('未发现新的 identity');
+          }
+          await loadList();
+        } catch (e) {
+          toast('扫描失败: ' + e.message, 'error');
+        }
+        btn.disabled = false; btn.textContent = '扫描目录';
+      });
+
+      // refresh
+      $('#refreshBtn').addEventListener('click', loadList);
+
+      // init
+      loadList();
     </script>
   </body>
 </html>
