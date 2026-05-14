@@ -768,6 +768,9 @@ class ChatHandler:
                     session_id = await plugin.create_conversation(
                         target.context,
                         target.page,
+                        proxy_url=target.proxy_key.proxy_host
+                        if target.proxy_key.use_proxy
+                        else "",
                         timezone=target.group.timezone
                         or getattr(target.proxy_key, "timezone", None)
                         or TIMEZONE,

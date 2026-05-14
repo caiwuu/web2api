@@ -16,8 +16,12 @@ from playwright.async_api import BrowserContext, Page
 from core.api.schemas import InputAttachment
 from core.constants import TIMEZONE
 from core.plugin.base import BaseSitePlugin, PluginRegistry, SiteConfig
+from core.plugin.cloudflare import (
+    FlareSolverrClearanceProvider,
+    is_cloudflare_challenge,
+)
 from core.plugin.helpers import (
-    clear_cookies_for_domain,
+    apply_cookie_auth,
     clear_page_storage_for_switch,
     request_json_via_page_fetch,
     safe_page_reload,
@@ -164,6 +168,10 @@ class ClaudePlugin(BaseSitePlugin):
         config_section="claude",
     )
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._clearance_provider = FlareSolverrClearanceProvider.from_config()
+
     async def apply_auth(
         self,
         context: BrowserContext,
@@ -172,23 +180,49 @@ class ClaudePlugin(BaseSitePlugin):
         *,
         reload: bool = True,
     ) -> None:
-        await clear_cookies_for_domain(context, self.site.cookie_domain)
         await clear_page_storage_for_switch(page)
         await safe_page_reload(page, url=self.start_url)
 
-        await super().apply_auth(context, page, auth, reload=reload)
+        await apply_cookie_auth(
+            context,
+            page,
+            auth,
+            self.site.cookie_name,
+            self.site.auth_keys,
+            self.site.cookie_domain,
+            reload=reload,
+        )
 
     # ---- 5 个必须实现的 hook ----
 
     async def fetch_site_context(
-        self, context: BrowserContext, page: Page
+        self,
+        context: BrowserContext,
+        page: Page,
+        *,
+        proxy_url: str = "",
     ) -> dict[str, Any] | None:
-        del context
         resp = await request_json_via_page_fetch(
             page,
             f"{self.api_base}/account",
             timeout_ms=15000,
         )
+        status = int(resp.get("status") or 0)
+        text = str(resp.get("text") or "")
+        if is_cloudflare_challenge(status, text):
+            refreshed = await self._clearance_provider.refresh(
+                context=context,
+                page=page,
+                proxy_url=proxy_url,
+                cookie_domain=self.site.cookie_domain,
+                start_url=self.start_url,
+            )
+            if refreshed:
+                resp = await request_json_via_page_fetch(
+                    page,
+                    f"{self.api_base}/account",
+                    timeout_ms=15000,
+                )
         if int(resp.get("status") or 0) != 200:
             text = str(resp.get("text") or "")[:500]
             logger.warning(
@@ -209,6 +243,37 @@ class ClaudePlugin(BaseSitePlugin):
         org = memberships[0].get("organization") or {}
         org_uuid = org.get("uuid")
         return {"org_uuid": org_uuid} if org_uuid else None
+
+    async def create_conversation(
+        self,
+        context: BrowserContext,
+        page: Page,
+        **kwargs: Any,
+    ) -> str | None:
+        site_context = await self.fetch_site_context(
+            context,
+            page,
+            proxy_url=str(kwargs.get("proxy_url") or ""),
+        )
+        if site_context is None:
+            logger.warning(
+                "[%s] fetch_site_context 返回 None，请确认已登录", self.type_name
+            )
+            return None
+        conv_id = await self.create_session(context, page, site_context)
+        if conv_id is None:
+            return None
+        state: dict[str, Any] = {"site_context": site_context}
+        if kwargs.get("timezone") is not None:
+            state["timezone"] = kwargs["timezone"]
+        self._session_state[conv_id] = state
+        logger.info(
+            "[%s] create_conversation done conv_id=%s sessions=%s",
+            self.type_name,
+            conv_id,
+            list(self._session_state.keys()),
+        )
+        return conv_id
 
     async def create_session(
         self,

@@ -62,6 +62,9 @@ claude:
   start_url: ''
   # Custom API base URL (leave empty to use the default endpoint)
   api_base: ''
+  # Optional FlareSolverr endpoint used to refresh Cloudflare clearance after challenge pages
+  flaresolverr_url: ''
+  flaresolverr_timeout_seconds: 60
   # Model name mapping: alias -> actual model identifier
   model_mapping:
     s4: claude-sonnet-4-5-20250929
