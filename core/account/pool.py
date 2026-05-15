@@ -78,6 +78,29 @@ class AccountPool:
                     return g, a
         return None
 
+    def find_account(
+        self,
+        type_name: str,
+        selector: str,
+    ) -> tuple[ProxyGroupConfig, AccountConfig] | None:
+        """
+        按账号选择器查找账号。
+
+        selector 支持 account.name、fingerprint_id 或完整 account_id
+        （fingerprint_id:name），用于请求级固定账号。
+        """
+        wanted = selector.strip()
+        if not wanted:
+            return None
+        for g in self._groups:
+            for a in g.accounts:
+                if a.type != type_name:
+                    continue
+                account_id = self.account_id(g, a)
+                if wanted in {a.name, g.fingerprint_id, account_id}:
+                    return g, a
+        return None
+
     def get_group_by_proxy_key(self, proxy_key: ProxyKey) -> ProxyGroupConfig | None:
         """根据 proxy_key（proxy_host, proxy_user, fingerprint_id, use_proxy, timezone）反查对应代理组。"""
         pk_tz = getattr(proxy_key, "timezone", None) or TIMEZONE
@@ -171,16 +194,19 @@ class AccountPool:
         type_name: str,
         *,
         exclude_fingerprint_ids: set[str] | None = None,
+        exclude_account_ids: set[str] | None = None,
     ) -> tuple[ProxyGroupConfig, AccountConfig] | None:
         """
-        全局按 type 轮询选择一个可用账号，可排除若干代理组。
+        全局按 type 轮询选择一个可用账号，可排除若干代理组或账号。
         用于“未打开浏览器的组里挑一个候选账号”。
         """
-        exclude = exclude_fingerprint_ids or set()
+        exclude_fingerprints = exclude_fingerprint_ids or set()
+        exclude_accounts = exclude_account_ids or set()
         pairs = [
             (g, a)
             for g, a in self._accounts_by_type(type_name)
-            if g.fingerprint_id not in exclude
+            if g.fingerprint_id not in exclude_fingerprints
+            and self.account_id(g, a) not in exclude_accounts
         ]
         if not pairs:
             return None

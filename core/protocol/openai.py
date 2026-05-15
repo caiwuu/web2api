@@ -66,6 +66,11 @@ class OpenAIProtocolAdapter(ProtocolAdapter):
             tool_choice=req.tool_choice,
             parallel_tool_calls=req.parallel_tool_calls,
             resume_session_id=resume_session_id,
+            metadata={
+                "web2api_account": str(raw_body.get("web2api_account") or "").strip()
+            }
+            if raw_body.get("web2api_account")
+            else {},
         )
 
     def render_non_stream(

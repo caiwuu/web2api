@@ -51,6 +51,10 @@ class OpenAIChatRequest(BaseModel):
         default=None,
         description="是否允许单次响应中并行多个 tool_call，false 时仅 0 或 1 个",
     )
+    web2api_account: str | None = Field(
+        default=None,
+        description="请求级固定账号；可填写账号名、fingerprint_id 或 fingerprint_id:name。",
+    )
     resume_session_id: str | None = Field(default=None, exclude=True)
     attachment_files: list[InputAttachment] = Field(
         default_factory=list,

@@ -15,14 +15,14 @@ export WEB2API_CONFIG_PATH="${CONFIG_PATH}"
 export WEB2API_DB_PATH="${DB_PATH}"
 export PYTHONUNBUFFERED=1
 
-# 清理残留的浏览器 profile，避免 Singleton* 锁导致 Chromium 认为 profile 正在被使用。
-rm -rf "${HOME}/fp-data"
-
 if [[ ! -f "${CONFIG_PATH}" ]]; then
   cp /app/docker/config.container.yaml "${CONFIG_PATH}"
 fi
 
 mkdir -p "${HOME}/fp-data"
+
+# 清理残留的 Chromium profile 锁，保留 cookies/local state 供 Cloudflare clearance 复用。
+find "${HOME}/fp-data" -maxdepth 2 -name "Singleton*" -exec rm -f {} + 2>/dev/null || true
 
 if [[ $# -gt 0 ]]; then
   exec "$@"

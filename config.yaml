@@ -93,6 +93,34 @@ scheduler:
   # When the limit is reached, new requests are routed to other open browsers; a new one is launched only if necessary.
   tab_max_concurrent: 5
 
+  # 同一账号两次请求开始之间的最小间隔（秒），用于降低网页端短窗口频率限制。
+  # Minimum interval between request starts for the same account (seconds).
+  account_min_interval_seconds: 10
+
+  # 已存在会话命中 busy 状态时，每次重试前的等待时间（秒）。
+  # Wait before retrying when an existing session is still marked busy (seconds).
+  session_busy_wait_seconds: 1
+
+  # 已存在会话命中 busy 状态时，单次请求最多等待多久（秒）。
+  # Maximum wait for a busy existing session before failing (seconds).
+  session_busy_max_wait_seconds: 20
+
+  # busy 会话标记的兜底过期时间（秒），用于清理异常残留的会话锁。
+  # Failsafe TTL for busy session markers to clean up stale session locks (seconds).
+  session_busy_stale_seconds: 600
+
+  # 续写请求进入真正流式输出前的准备阶段最长等待时间（秒）。
+  # Maximum wait before the plugin yields the first streaming chunk at all (seconds).
+  stream_prepare_timeout_seconds: 30
+
+  # 流式响应首个数据块最长等待时间（秒），超过后直接返回错误，避免长时间无响应。
+  # Maximum wait for the first streaming chunk before failing fast (seconds).
+  stream_first_chunk_timeout_seconds: 30
+
+  # 流式响应开始后，连续多久没有新数据就判为超时（秒）。
+  # Maximum idle time after streaming starts before treating it as stalled (seconds).
+  stream_no_data_timeout_seconds: 15
+
   # 浏览器空闲回收扫描周期（秒）/ Browser idle GC scan interval (seconds)
   browser_gc_interval_seconds: 300
 
@@ -118,6 +146,14 @@ claude:
   # Use default in production; for debugging, point to mock, e.g.:
   #   api_base: "http://127.0.0.1:8002/mock"
   api_base: ''
+
+  # Claude 返回 429 但没有 reset header 时的 fallback 冷却时间（秒）。
+  # Fallback cooldown when Claude returns 429 without a reset header (seconds).
+  rate_limit_fallback_cooldown_seconds: 60
+
+  # 创建会话前获取账号上下文（/api/account）的超时时间（秒）。
+  # Timeout for fetching account context (/api/account) before creating a conversation (seconds).
+  account_context_timeout_seconds: 12
 
   # OpenAI 兼容模型名 -> 实际模型 ID，用于 /v1/models 列表及请求时的模型解析
   # OpenAI-compatible model name -> actual model ID, used for /v1/models listing and model resolution on requests
