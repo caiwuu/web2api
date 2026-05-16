@@ -53,13 +53,23 @@ async def handle_protocol_chat_request(
 
     service = CanonicalChatService(handler)
     if canonical_req.stream:
+        stream_iter = adapter.render_stream(
+            canonical_req,
+            service.stream_raw(canonical_req),
+        )
+        try:
+            first_event = await stream_iter.__anext__()
+        except StopAsyncIteration:
+            first_event = None
+        except Exception as exc:
+            status, payload = adapter.render_error(exc)
+            return JSONResponse(status_code=status, content=payload)
 
         async def sse_stream() -> AsyncIterator[str]:
+            if first_event is not None:
+                yield first_event
             try:
-                async for event in adapter.render_stream(
-                    canonical_req,
-                    service.stream_raw(canonical_req),
-                ):
+                async for event in stream_iter:
                     yield event
             except Exception as exc:
                 status, payload = adapter.render_error(exc)

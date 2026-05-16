@@ -10,6 +10,8 @@ import logging
 from collections.abc import Callable
 from typing import Any, AsyncIterator
 
+from core.config.settings import get_float
+
 from playwright.async_api import BrowserContext, Page
 
 from core.plugin.errors import AccountFrozenError
@@ -399,7 +401,8 @@ async def stream_raw_via_page_fetch(
     on_headers: Callable[[dict[str, str]], None] | None = None,
     error_state: dict[str, bool] | None = None,
     fetch_timeout: int = 90,
-    read_timeout: float = 130.0,
+    read_timeout: float = 15.0,
+    first_chunk_timeout: float | None = None,
 ) -> AsyncIterator[str]:
     """
     在浏览器内对 url 发起 POST body，流式回传原始字符串块（含 SSE 等）。
@@ -409,6 +412,12 @@ async def stream_raw_via_page_fetch(
     """
     chunk_queue: asyncio.Queue[str] = asyncio.Queue()
     BINDING_NAME = "sendChunk_" + request_id
+    started_at = asyncio.get_running_loop().time()
+    if first_chunk_timeout is None:
+        first_chunk_timeout = max(
+            5.0,
+            get_float("scheduler", "stream_first_chunk_timeout_seconds", 30.0),
+        )
 
     def on_binding_called(event: dict[str, Any]) -> None:
         name = event.get("name")
@@ -439,15 +448,37 @@ async def stream_raw_via_page_fetch(
         fetch_task = asyncio.create_task(run_fetch())
         try:
             headers = None
+            seen_first_chunk = False
             while True:
                 try:
-                    chunk = await asyncio.wait_for(
-                        chunk_queue.get(), timeout=read_timeout
-                    )
+                    timeout = (max(1.0, get_float("scheduler", "stream_no_data_timeout_seconds", read_timeout)) if seen_first_chunk else first_chunk_timeout)
+                    chunk = await asyncio.wait_for(chunk_queue.get(), timeout=timeout)
                 except asyncio.TimeoutError:
-                    logger.warning("流式读取超时")
-                    break
+                    if seen_first_chunk:
+                        logger.warning("流式读取超时")
+                        raise RuntimeError("流式读取超时")
+                    logger.warning(
+                        "流式首包超时 request_id=%s elapsed=%.2fs url=%s",
+                        request_id,
+                        asyncio.get_running_loop().time() - started_at,
+                        url[:80] + "..." if len(url) > 80 else url,
+                    )
+                    raise RuntimeError("流式首包超时")
+                if not seen_first_chunk:
+                    logger.info(
+                        "[fetch] first chunk received request_id=%s elapsed=%.2fs url=%s",
+                        request_id,
+                        asyncio.get_running_loop().time() - started_at,
+                        url[:80] + "..." if len(url) > 80 else url,
+                    )
+                seen_first_chunk = True
                 if chunk == "__done__":
+                    logger.info(
+                        "[fetch] stream done request_id=%s elapsed=%.2fs first_chunk=%s",
+                        request_id,
+                        asyncio.get_running_loop().time() - started_at,
+                        seen_first_chunk,
+                    )
                     break
                 if chunk.startswith("__headers__:"):
                     try:
@@ -478,14 +509,23 @@ async def stream_raw_via_page_fetch(
                     continue
                 yield chunk
         finally:
-            try:
-                await asyncio.wait_for(fetch_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                fetch_task.cancel()
+            if fetch_task.done():
                 try:
                     await fetch_task
                 except asyncio.CancelledError:
                     pass
+            else:
+                fetch_task.cancel()
+
+                def consume_fetch_task_result(task: asyncio.Task[None]) -> None:
+                    try:
+                        task.result()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:
+                        logger.debug("[fetch] background fetch task ended: %s", exc)
+
+                fetch_task.add_done_callback(consume_fetch_task_result)
     finally:
         if cdp is not None:
             try:

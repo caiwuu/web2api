@@ -74,6 +74,9 @@ class CanonicalChatService:
             tools=openai_tools or None,
             tool_choice=req.tool_choice,
             parallel_tool_calls=req.parallel_tool_calls,
+            web2api_account=(
+                str(req.metadata.get("web2api_account") or "").strip() or None
+            ),
             resume_session_id=req.resume_session_id,
             # 由 ChatHandler 根据是否 full_history 选择实际赋值给 attachment_files
             attachment_files=[],

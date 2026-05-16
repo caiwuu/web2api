@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 import uuid as uuid_mod
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
@@ -82,6 +81,11 @@ class AnthropicProtocolAdapter(ProtocolAdapter):
             if isinstance(raw_body.get("parallel_tool_calls"), bool)
             else None,
             resume_session_id=resume_session_id,
+            metadata={
+                "web2api_account": str(raw_body.get("web2api_account") or "").strip()
+            }
+            if raw_body.get("web2api_account")
+            else {},
         )
 
     def render_non_stream(

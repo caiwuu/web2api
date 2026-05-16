@@ -14,17 +14,24 @@ from typing import Any
 from playwright.async_api import BrowserContext, Page
 
 from core.api.schemas import InputAttachment
+from core.config.settings import get_float
 from core.constants import TIMEZONE
 from core.plugin.base import BaseSitePlugin, PluginRegistry, SiteConfig
+from core.plugin.cloudflare import (
+    FlareSolverrClearanceProvider,
+    is_cloudflare_challenge,
+)
 from core.plugin.helpers import (
-    clear_cookies_for_domain,
     clear_page_storage_for_switch,
+    apply_cookie_auth,
     request_json_via_page_fetch,
     safe_page_reload,
     upload_file_via_page_fetch,
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_RATE_LIMIT_FALLBACK_COOLDOWN_SECONDS = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +171,10 @@ class ClaudePlugin(BaseSitePlugin):
         config_section="claude",
     )
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._clearance_provider = FlareSolverrClearanceProvider.from_config()
+
     async def apply_auth(
         self,
         context: BrowserContext,
@@ -172,31 +183,67 @@ class ClaudePlugin(BaseSitePlugin):
         *,
         reload: bool = True,
     ) -> None:
-        await clear_cookies_for_domain(context, self.site.cookie_domain)
         await clear_page_storage_for_switch(page)
         await safe_page_reload(page, url=self.start_url)
 
-        await super().apply_auth(context, page, auth, reload=reload)
+        await apply_cookie_auth(
+            context,
+            page,
+            auth,
+            self.site.cookie_name,
+            self.site.auth_keys,
+            self.site.cookie_domain,
+            reload=reload,
+        )
 
     # ---- 5 个必须实现的 hook ----
 
     async def fetch_site_context(
-        self, context: BrowserContext, page: Page
+        self,
+        context: BrowserContext,
+        page: Page,
+        *,
+        proxy_url: str = "",
     ) -> dict[str, Any] | None:
-        del context
+        account_timeout_ms = int(
+            max(5000, get_float("claude", "account_context_timeout_seconds", 12.0) * 1000)
+        )
+        logger.info("[%s] fetch_site_context start timeout_ms=%s proxy=%s", self.type_name, account_timeout_ms, proxy_url or "direct")
         resp = await request_json_via_page_fetch(
             page,
             f"{self.api_base}/account",
-            timeout_ms=15000,
+            timeout_ms=account_timeout_ms,
         )
+        status = int(resp.get("status") or 0)
+        text = str(resp.get("text") or "")
+        if is_cloudflare_challenge(status, text):
+            refreshed = await self._clearance_provider.refresh(
+                context=context,
+                page=page,
+                proxy_url=proxy_url,
+                cookie_domain=self.site.cookie_domain,
+                start_url=self.start_url,
+            )
+            if not refreshed:
+                raise RuntimeError("Cloudflare challenge 未通过，clearance 刷新失败")
+            resp = await request_json_via_page_fetch(
+                page,
+                f"{self.api_base}/account",
+                timeout_ms=account_timeout_ms,
+            )
+            retried_status = int(resp.get("status") or 0)
+            retried_text = str(resp.get("text") or "")
+            if is_cloudflare_challenge(retried_status, retried_text):
+                raise RuntimeError("Cloudflare challenge 未通过，clearance 刷新后仍被拦截")
         if int(resp.get("status") or 0) != 200:
             text = str(resp.get("text") or "")[:500]
             logger.warning(
-                "[%s] fetch_site_context 失败 status=%s url=%s body=%s",
+                "[%s] fetch_site_context 失败 status=%s url=%s body=%s proxy=%s",
                 self.type_name,
                 resp.get("status"),
                 resp.get("url"),
                 text,
+                proxy_url or "direct",
             )
             return None
         data = resp.get("json")
@@ -209,6 +256,40 @@ class ClaudePlugin(BaseSitePlugin):
         org = memberships[0].get("organization") or {}
         org_uuid = org.get("uuid")
         return {"org_uuid": org_uuid} if org_uuid else None
+
+    async def create_conversation(
+        self,
+        context: BrowserContext,
+        page: Page,
+        **kwargs: Any,
+    ) -> str | None:
+        try:
+            site_context = await self.fetch_site_context(
+                context,
+                page,
+                proxy_url=str(kwargs.get("proxy_url") or ""),
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(f"创建会话前站点上下文获取失败: {exc}") from exc
+        if site_context is None:
+            logger.warning(
+                "[%s] fetch_site_context 返回 None，请确认已登录", self.type_name
+            )
+            return None
+        conv_id = await self.create_session(context, page, site_context)
+        if conv_id is None:
+            return None
+        state: dict[str, Any] = {"site_context": site_context}
+        if kwargs.get("timezone") is not None:
+            state["timezone"] = kwargs["timezone"]
+        self._session_state[conv_id] = state
+        logger.info(
+            "[%s] create_conversation done conv_id=%s sessions=%s",
+            self.type_name,
+            conv_id,
+            list(self._session_state.keys()),
+        )
+        return conv_id
 
     async def create_session(
         self,
@@ -293,7 +374,15 @@ class ClaudePlugin(BaseSitePlugin):
                     return int(dt.timestamp())
                 except Exception:
                     pass
-        return int(time.time()) + 5 * 3600
+        cooldown = max(
+            1.0,
+            get_float(
+                "claude",
+                "rate_limit_fallback_cooldown_seconds",
+                _DEFAULT_RATE_LIMIT_FALLBACK_COOLDOWN_SECONDS,
+            ),
+        )
+        return int(time.time() + cooldown)
 
     _UUID_RE = re.compile(
         r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"

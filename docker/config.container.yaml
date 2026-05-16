@@ -50,6 +50,18 @@ browser:
 scheduler:
   # Maximum number of tabs allowed to run concurrently
   tab_max_concurrent: 5
+  # Wait before retrying when an existing session is still marked busy
+  session_busy_wait_seconds: 1
+  # Maximum wait for a busy existing session before failing
+  session_busy_max_wait_seconds: 20
+  # Failsafe TTL for busy session markers to clean up stale session locks
+  session_busy_stale_seconds: 600
+  # Maximum wait before the plugin yields the first streaming chunk at all
+  stream_prepare_timeout_seconds: 30
+  # Maximum wait for the first streaming chunk before failing fast
+  stream_first_chunk_timeout_seconds: 30
+  # Maximum idle time after streaming starts before treating it as stalled
+  stream_no_data_timeout_seconds: 15
   # Interval in seconds for browser garbage collection
   browser_gc_interval_seconds: 300
   # Seconds of inactivity before a tab is considered idle
@@ -62,6 +74,11 @@ claude:
   start_url: ''
   # Custom API base URL (leave empty to use the default endpoint)
   api_base: ''
+  # Optional FlareSolverr endpoint used to refresh Cloudflare clearance after challenge pages
+  flaresolverr_url: ''
+  flaresolverr_timeout_seconds: 60
+  # Timeout for fetching account context (/api/account) before creating a conversation
+  account_context_timeout_seconds: 12
   # Model name mapping: alias -> actual model identifier
   model_mapping:
     s4: claude-sonnet-4-5-20250929

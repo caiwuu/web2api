@@ -89,3 +89,12 @@ def get_bool(section: str, key: str, default: bool = False) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     return bool(default)
+
+
+def get_float(section: str, key: str, default: float = 0.0) -> float:
+    """从 config 读取浮点数；缺失或非法时返回 default。"""
+    val = get(section, key, default)
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return float(default)

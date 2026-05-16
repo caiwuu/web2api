@@ -40,8 +40,14 @@ class _FakeHandler:
 class _FakeAdapter(ProtocolAdapter):
     protocol_name = "fake"
 
-    def __init__(self, *, stream_raises: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        stream_raises: bool = False,
+        stream_raises_after_first_chunk: bool = False,
+    ) -> None:
         self._stream_raises = stream_raises
+        self._stream_raises_after_first_chunk = stream_raises_after_first_chunk
 
     def parse_request(
         self,
@@ -68,11 +74,15 @@ class _FakeAdapter(ProtocolAdapter):
         req: CanonicalChatRequest,
         raw_stream: AsyncIterator[OpenAIStreamEvent],
     ) -> AsyncIterator[str]:
+        yielded = False
         async for event in raw_stream:
             if self._stream_raises:
                 raise RuntimeError("stream failed")
             if event.content:
                 yield f"chunk:{event.content}"
+                yielded = True
+                if self._stream_raises_after_first_chunk and yielded:
+                    raise RuntimeError("stream failed")
 
     def render_error(self, exc: Exception) -> tuple[int, dict[str, Any]]:
         return 500, {"error": str(exc)}
@@ -107,7 +117,7 @@ class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler.calls, [("demo", "m1")])
 
     async def test_handle_protocol_chat_request_openai_stream_error(self) -> None:
-        adapter = _FakeAdapter(stream_raises=True)
+        adapter = _FakeAdapter(stream_raises_after_first_chunk=True)
         handler = _FakeHandler(
             [OpenAIStreamEvent(type="content_delta", content="hello world")]
         )
@@ -122,10 +132,10 @@ class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(response, StreamingResponse)
         body = await _collect_streaming_response(response)
-        self.assertEqual(body, 'data: {"error": "stream failed"}\n\n')
+        self.assertEqual(body, 'chunk:hello worlddata: {"error": "stream failed"}\n\n')
 
     async def test_handle_protocol_chat_request_anthropic_stream_error(self) -> None:
-        adapter = _FakeAdapter(stream_raises=True)
+        adapter = _FakeAdapter(stream_raises_after_first_chunk=True)
         handler = _FakeHandler(
             [OpenAIStreamEvent(type="content_delta", content="hello world")]
         )
@@ -140,7 +150,29 @@ class TestProtocolRouteHelper(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(response, StreamingResponse)
         body = await _collect_streaming_response(response)
-        self.assertEqual(body, 'event: error\ndata: {"error": "stream failed"}\n\n')
+        self.assertEqual(
+            body,
+            'chunk:hello worldevent: error\ndata: {"error": "stream failed"}\n\n',
+        )
+
+    async def test_handle_protocol_chat_request_stream_error_before_first_chunk_returns_json_response(
+        self,
+    ) -> None:
+        adapter = _FakeAdapter(stream_raises=True)
+        handler = _FakeHandler(
+            [OpenAIStreamEvent(type="content_delta", content="hello world")]
+        )
+
+        response = await handle_protocol_chat_request(
+            adapter=adapter,
+            provider="demo",
+            request=_FakeRequest({"model": "m1", "stream": True}),
+            handler=handler,
+            stream_error_formatter=format_openai_stream_error,
+        )
+
+        self.assertIsInstance(response, JSONResponse)
+        self.assertEqual(response.status_code, 500)
 
     async def test_parse_error_returns_json_response(self) -> None:
         class _ParseErrorAdapter(_FakeAdapter):

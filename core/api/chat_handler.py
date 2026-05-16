@@ -18,7 +18,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, cast
 
@@ -27,7 +27,7 @@ from playwright.async_api import BrowserContext, Page
 from core.account.pool import AccountPool
 from core.config.repository import ConfigRepository
 from core.config.schema import AccountConfig, ProxyGroupConfig
-from core.config.settings import get
+from core.config.settings import get, get_float
 from core.constants import TIMEZONE
 from core.plugin.base import AccountFrozenError, BaseSitePlugin, PluginRegistry
 from core.plugin.helpers import clear_cookies_for_domain
@@ -41,6 +41,41 @@ from core.api.tagged_output import format_tagged_prompt
 from core.hub.schemas import OpenAIStreamEvent
 
 logger = logging.getLogger(__name__)
+
+
+_TRANSIENT_BROWSER_ERROR_MARKERS = (
+    "Page.evaluate: Target crashed",
+    "Target crashed",
+    "Page crashed",
+    "Execution context was destroyed",
+    "Target page, context or browser has been closed",
+    "Browser closed",
+    "net::ERR_CONNECTION_CLOSED",
+    "net::ERR_TUNNEL_CONNECTION_FAILED",
+    "流式读取超时",
+    "请求超时",
+)
+
+
+def _is_transient_browser_error(exc: Exception) -> bool:
+    message = str(exc)
+    return any(marker in message for marker in _TRANSIENT_BROWSER_ERROR_MARKERS)
+
+
+class _AccountCooldownWait(RuntimeError):
+    def __init__(self, wait_seconds: float) -> None:
+        self.wait_seconds = max(0.01, wait_seconds)
+        super().__init__(f"账号请求间隔未到，请等待 {self.wait_seconds:.2f} 秒")
+
+
+class _SessionBusyWait(RuntimeError):
+    def __init__(self, wait_seconds: float) -> None:
+        self.wait_seconds = max(0.01, wait_seconds)
+        super().__init__(f"当前会话正在处理中，请等待 {self.wait_seconds:.2f} 秒")
+
+
+class _RetryableUpstreamError(RuntimeError):
+    """上游临时失败：适合切换账号/浏览器重试。"""
 
 
 def _request_messages_as_dicts(req: OpenAIChatRequest) -> list[dict[str, Any]]:
@@ -64,6 +99,11 @@ def _proxy_key_for_group(group: ProxyGroupConfig) -> ProxyKey:
         group.use_proxy,
         group.timezone or TIMEZONE,
     )
+
+
+@dataclass
+class _BusySessionState:
+    started_at: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -93,7 +133,7 @@ class ChatHandler:
         self._config_repo = config_repo
         self._schedule_lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
-        self._busy_sessions: set[str] = set()
+        self._busy_sessions: dict[str, _BusySessionState] = {}
         self._tab_max_concurrent = int(get("scheduler", "tab_max_concurrent") or 5)
         self._gc_interval_seconds = float(
             get("scheduler", "browser_gc_interval_seconds") or 300
@@ -102,6 +142,23 @@ class ChatHandler:
         self._resident_browser_count = int(
             get("scheduler", "resident_browser_count", 1)
         )
+        self._account_min_interval_seconds = max(
+            0.0,
+            get_float("scheduler", "account_min_interval_seconds", 10.0),
+        )
+        self._session_busy_wait_seconds = max(
+            0.05,
+            get_float("scheduler", "session_busy_wait_seconds", 1.0),
+        )
+        self._session_busy_max_wait_seconds = max(
+            self._session_busy_wait_seconds,
+            get_float("scheduler", "session_busy_max_wait_seconds", 20.0),
+        )
+        self._session_busy_stale_seconds = max(
+            self._session_busy_max_wait_seconds,
+            get_float("scheduler", "session_busy_stale_seconds", 600.0),
+        )
+        self._account_last_started_at: dict[str, float] = {}
 
     def reload_pool(
         self,
@@ -175,6 +232,7 @@ class ChatHandler:
 
             try:
                 async with self._schedule_lock:
+                    await self._prune_stale_busy_sessions_locked()
                     await self._reconcile_tabs_locked()
                     closed = await self._browser_manager.collect_idle_browsers(
                         idle_seconds=self._tab_idle_seconds,
@@ -341,6 +399,80 @@ class ChatHandler:
             plugin.drop_sessions(session_ids)
         tab.sessions.clear()
 
+    async def _prune_stale_busy_sessions_locked(
+        self, *, now: float | None = None
+    ) -> None:
+        now = time.time() if now is None else now
+        stale_ids = [
+            session_id
+            for session_id, state in self._busy_sessions.items()
+            if now - state.started_at >= self._session_busy_stale_seconds
+        ]
+        for session_id in stale_ids:
+            state = self._busy_sessions.get(session_id)
+            age = now - state.started_at if state is not None else None
+            logger.warning(
+                "[chat] pruning stale busy session session_id=%s age=%.2fs",
+                session_id,
+                age or -1.0,
+            )
+            self._busy_sessions.pop(session_id, None)
+            entry = self._session_cache.get(session_id)
+            if entry is None:
+                continue
+            self._invalidate_tab_sessions_locked(entry.proxy_key, entry.type_name)
+            closed = await self._browser_manager.close_tab(
+                entry.proxy_key,
+                entry.type_name,
+            )
+            if closed is not None:
+                self._apply_closed_tabs_locked([closed])
+
+    def _account_cooldown_wait_locked(
+        self,
+        account_id: str,
+        *,
+        now: float | None = None,
+    ) -> float:
+        if self._account_min_interval_seconds <= 0:
+            return 0.0
+        last_started_at = self._account_last_started_at.get(account_id)
+        if last_started_at is None:
+            return 0.0
+        now = time.time() if now is None else now
+        return max(0.0, last_started_at + self._account_min_interval_seconds - now)
+
+    def _cooling_account_ids_locked(
+        self,
+        type_name: str,
+        *,
+        now: float | None = None,
+    ) -> tuple[set[str], list[float]]:
+        now = time.time() if now is None else now
+        cooling: set[str] = set()
+        waits: list[float] = []
+        for group in self._pool.groups():
+            for account in group.accounts:
+                if account.type != type_name or not account.is_available():
+                    continue
+                account_id = self._pool.account_id(group, account)
+                wait = self._account_cooldown_wait_locked(account_id, now=now)
+                if wait > 0:
+                    cooling.add(account_id)
+                    waits.append(wait)
+        return cooling, waits
+
+    def _reserve_account_request_locked(
+        self,
+        group: ProxyGroupConfig,
+        account: AccountConfig,
+    ) -> None:
+        if self._account_min_interval_seconds <= 0:
+            return
+        self._account_last_started_at[self._pool.account_id(group, account)] = (
+            time.time()
+        )
+
     def _revive_tab_if_possible_locked(
         self,
         proxy_key: ProxyKey,
@@ -348,6 +480,8 @@ class ChatHandler:
     ) -> bool:
         tab = self._browser_manager.get_tab(proxy_key, type_name)
         if tab is None or tab.active_requests != 0:
+            return False
+        if tab.state == "draining":
             return False
         if tab.accepting_new:
             return True
@@ -421,33 +555,78 @@ class ChatHandler:
         plugin: Any,
         type_name: str,
         session_id: str,
+        *,
+        forced_account_selector: str | None = None,
     ) -> _RequestTarget | None:
+        await self._prune_stale_busy_sessions_locked()
         entry = self._session_cache.get(session_id)
-        if entry is None or entry.type_name != type_name:
+        if entry is None:
+            logger.info("[chat] reuse miss session_id=%s reason=session_not_in_cache", session_id)
+            return None
+        if entry.type_name != type_name:
+            logger.info("[chat] reuse miss session_id=%s reason=type_mismatch cached=%s requested=%s", session_id, entry.type_name, type_name)
             return None
 
         pair = self._pool.get_account_by_id(entry.account_id)
         if pair is None:
+            logger.info("[chat] reuse miss session_id=%s reason=account_missing account_id=%s", session_id, entry.account_id)
             self._invalidate_session_locked(session_id, entry)
             return None
         group, account = pair
+        if forced_account_selector:
+            forced_pair = self._pool.find_account(type_name, forced_account_selector)
+            forced_account_id = (
+                self._pool.account_id(*forced_pair) if forced_pair is not None else None
+            )
+            if forced_account_id != entry.account_id:
+                logger.info("[chat] reuse miss session_id=%s reason=forced_account_mismatch expected=%s actual=%s", session_id, forced_account_id, entry.account_id)
+                return None
 
         tab = self._browser_manager.get_tab(entry.proxy_key, type_name)
-        if (
-            tab is None
-            or tab.account_id != entry.account_id
-            or not plugin.has_session(session_id)
-        ):
+        if tab is None:
+            logger.info("[chat] reuse miss session_id=%s reason=tab_missing proxy=%s", session_id, entry.proxy_key.fingerprint_id)
+            self._invalidate_session_locked(session_id, entry)
+            return None
+        if tab.account_id != entry.account_id:
+            logger.info("[chat] reuse miss session_id=%s reason=tab_account_mismatch tab=%s cache=%s", session_id, tab.account_id, entry.account_id)
+            self._invalidate_session_locked(session_id, entry)
+            return None
+        if not plugin.has_session(session_id):
+            logger.info("[chat] reuse miss session_id=%s reason=plugin_session_missing", session_id)
             self._invalidate_session_locked(session_id, entry)
             return None
 
         if not tab.accepting_new:
+            logger.info("[chat] reuse miss session_id=%s reason=tab_not_accepting_new", session_id)
             self._invalidate_session_locked(session_id, entry)
             return None
-        if session_id in self._busy_sessions:
-            raise RuntimeError("当前会话正在处理中，请稍后再试")
+        busy_state = self._busy_sessions.get(session_id)
+        if busy_state is not None:
+            busy_age = time.time() - busy_state.started_at
+            if busy_age >= self._session_busy_max_wait_seconds:
+                logger.warning(
+                    "[chat] session busy exceeded max wait; invalidating session_id=%s age=%.2fs",
+                    session_id,
+                    busy_age,
+                )
+                self._busy_sessions.pop(session_id, None)
+                logger.info("[chat] reuse miss session_id=%s reason=busy_exceeded_max_wait", session_id)
+                self._invalidate_session_locked(session_id, entry)
+                return None
+            logger.info(
+                "[chat] session busy session_id=%s age=%.2fs wait=%.2fs",
+                session_id,
+                busy_age,
+                self._session_busy_wait_seconds,
+            )
+            raise _SessionBusyWait(self._session_busy_wait_seconds)
         if tab.active_requests >= self._tab_max_concurrent:
-            raise RuntimeError("当前会话所在 tab 繁忙，请稍后再试")
+            logger.info("[chat] reuse miss session_id=%s reason=tab_concurrency_limit active=%s max=%s", session_id, tab.active_requests, self._tab_max_concurrent)
+            return None
+        cooldown_wait = self._account_cooldown_wait_locked(entry.account_id)
+        if cooldown_wait > 0:
+            logger.info("[chat] reuse miss session_id=%s reason=account_cooling_down wait=%.2fs", session_id, cooldown_wait)
+            return None
 
         page = self._browser_manager.acquire_tab(
             entry.proxy_key,
@@ -455,10 +634,13 @@ class ChatHandler:
             self._tab_max_concurrent,
         )
         if page is None:
+            logger.info("[chat] reuse miss session_id=%s reason=acquire_tab_failed", session_id)
             raise RuntimeError("当前会话暂不可复用，请稍后再试")
 
+        self._reserve_account_request_locked(group, account)
         self._session_cache.touch(session_id)
-        self._busy_sessions.add(session_id)
+        self._busy_sessions[session_id] = _BusySessionState()
+        logger.info("[chat] acquire busy session_id=%s mode=reuse", session_id)
         context = await self._browser_manager.ensure_browser(
             entry.proxy_key,
             group.proxy_pass,
@@ -476,9 +658,19 @@ class ChatHandler:
     async def _allocate_new_target_locked(
         self,
         type_name: str,
+        *,
+        forced_account_selector: str | None = None,
     ) -> _RequestTarget:
         # 先做一次轻量收尾，把已 drained 的 tab 尽快切号/关闭。
         await self._reconcile_tabs_locked()
+        if forced_account_selector:
+            return await self._allocate_forced_target_locked(
+                type_name,
+                forced_account_selector,
+            )
+        cooling_account_ids, cooldown_waits = self._cooling_account_ids_locked(
+            type_name
+        )
 
         # 1. 已打开浏览器里已有该 type 的可服务 tab，直接复用。
         existing_tabs: list[tuple[int, float, ProxyKey, TabRuntime]] = []
@@ -488,6 +680,7 @@ class ChatHandler:
                 tab is not None
                 and tab.accepting_new
                 and tab.active_requests < self._tab_max_concurrent
+                and tab.account_id not in cooling_account_ids
             ):
                 existing_tabs.append(
                     (tab.active_requests, tab.last_used_at, proxy_key, tab)
@@ -508,6 +701,7 @@ class ChatHandler:
                     self._tab_max_concurrent,
                 )
                 if page is not None:
+                    self._reserve_account_request_locked(group, account)
                     context = await self._browser_manager.ensure_browser(
                         proxy_key,
                         group.proxy_pass,
@@ -532,7 +726,11 @@ class ChatHandler:
             group = self._pool.get_group_by_proxy_key(proxy_key)
             if group is None:
                 continue
-            if not self._pool.has_available_account_in_group(group, type_name):
+            if not self._pool.has_available_account_in_group(
+                group,
+                type_name,
+                exclude_account_ids=cooling_account_ids,
+            ):
                 continue
             open_browser_candidates.append(
                 (
@@ -546,7 +744,11 @@ class ChatHandler:
             _, _, proxy_key, group = min(
                 open_browser_candidates, key=lambda item: item[:2]
             )
-            account = self._pool.next_available_account_in_group(group, type_name)
+            account = self._pool.next_available_account_in_group(
+                group,
+                type_name,
+                exclude_account_ids=cooling_account_ids,
+            )
             if account is not None:
                 plugin = PluginRegistry.get(type_name)
                 if plugin is None:
@@ -566,6 +768,7 @@ class ChatHandler:
                 )
                 if page is None:
                     raise RuntimeError("新建 tab 后仍无法占用请求槽位")
+                self._reserve_account_request_locked(group, account)
                 context = await self._browser_manager.ensure_browser(
                     proxy_key,
                     group.proxy_pass,
@@ -592,7 +795,7 @@ class ChatHandler:
             if not self._pool.has_available_account_in_group(
                 group,
                 type_name,
-                exclude_account_ids={tab.account_id},
+                exclude_account_ids={tab.account_id} | cooling_account_ids,
             ):
                 continue
             switch_candidates.append((tab.last_used_at, proxy_key, group))
@@ -604,7 +807,7 @@ class ChatHandler:
                 next_account = self._pool.next_available_account_in_group(
                     group,
                     type_name,
-                    exclude_account_ids={tab.account_id},
+                    exclude_account_ids={tab.account_id} | cooling_account_ids,
                 )
                 if next_account is not None:
                     self._invalidate_tab_sessions_locked(proxy_key, type_name)
@@ -622,6 +825,7 @@ class ChatHandler:
                         )
                         if page is None:
                             raise RuntimeError("切号后仍无法占用请求槽位")
+                        self._reserve_account_request_locked(group, next_account)
                         context = await self._browser_manager.ensure_browser(
                             proxy_key,
                             group.proxy_pass,
@@ -644,8 +848,17 @@ class ChatHandler:
         pair = self._pool.next_available_pair(
             type_name,
             exclude_fingerprint_ids=open_groups,
+            exclude_account_ids=cooling_account_ids,
         )
         if pair is None:
+            blocked_pair = self._pool.next_available_pair(
+                type_name,
+                exclude_account_ids=cooling_account_ids,
+            )
+            if blocked_pair is not None:
+                raise _AccountCooldownWait(1.0)
+            if cooldown_waits:
+                raise _AccountCooldownWait(min(cooldown_waits))
             raise ValueError(f"没有类别为 {type_name!r} 的可用账号，请稍后再试")
         group, account = pair
         proxy_key = _proxy_key_for_group(group)
@@ -667,8 +880,92 @@ class ChatHandler:
         )
         if page is None:
             raise RuntimeError("新浏览器建 tab 后仍无法占用请求槽位")
+        self._reserve_account_request_locked(group, account)
         context = await self._browser_manager.ensure_browser(
             proxy_key, group.proxy_pass
+        )
+        return _RequestTarget(
+            proxy_key=proxy_key,
+            group=group,
+            account=account,
+            context=context,
+            page=page,
+            session_id=None,
+            full_history=True,
+        )
+
+    async def _allocate_forced_target_locked(
+        self,
+        type_name: str,
+        account_selector: str,
+    ) -> _RequestTarget:
+        pair = self._pool.find_account(type_name, account_selector)
+        if pair is None:
+            raise ValueError(
+                f"没有类别为 {type_name!r} 且账号为 {account_selector!r} 的账号"
+            )
+        group, account = pair
+        account_id = self._pool.account_id(group, account)
+        if not account.enabled:
+            raise ValueError(f"指定账号已禁用: {account_selector}")
+        now = time.time()
+        if account.unfreeze_at is not None and account.unfreeze_at > now:
+            raise _AccountCooldownWait(account.unfreeze_at - now)
+        wait = self._account_cooldown_wait_locked(account_id, now=now)
+        if wait > 0:
+            raise _AccountCooldownWait(wait)
+
+        proxy_key = _proxy_key_for_group(group)
+
+        tab = self._browser_manager.get_tab(proxy_key, type_name)
+        if tab is not None and tab.account_id != account_id:
+            if tab.active_requests != 0:
+                raise RuntimeError("指定账号所在浏览器的 tab 正忙，请稍后再试")
+            plugin = PluginRegistry.get(type_name)
+            if plugin is None:
+                raise ValueError(f"未注册的 type: {type_name}")
+            self._invalidate_tab_sessions_locked(proxy_key, type_name)
+            switched = await self._browser_manager.switch_tab_account(
+                proxy_key,
+                type_name,
+                account_id,
+                self._make_apply_auth_fn(plugin, account),
+            )
+            if not switched:
+                closed = await self._browser_manager.close_tab(proxy_key, type_name)
+                if closed is not None:
+                    self._apply_closed_tabs_locked([closed])
+                tab = None
+
+        if tab is None:
+            plugin = PluginRegistry.get(type_name)
+            if plugin is None:
+                raise ValueError(f"未注册的 type: {type_name}")
+            await self._browser_manager.open_tab(
+                proxy_key,
+                group.proxy_pass,
+                type_name,
+                account_id,
+                plugin.create_page,
+                self._make_apply_auth_fn(plugin, account),
+            )
+
+        page = self._browser_manager.acquire_tab(
+            proxy_key,
+            type_name,
+            self._tab_max_concurrent,
+        )
+        if page is None:
+            raise RuntimeError("指定账号当前繁忙，请稍后再试")
+        self._reserve_account_request_locked(group, account)
+        context = await self._browser_manager.ensure_browser(
+            proxy_key,
+            group.proxy_pass,
+        )
+        logger.info(
+            "[chat] forced account selected type=%s account=%s",
+            type_name,
+            account_id,
         )
         return _RequestTarget(
             proxy_key=proxy_key,
@@ -695,7 +992,13 @@ class ChatHandler:
 
         raw_messages = _request_messages_as_dicts(req)
         conv_uuid = req.resume_session_id or parse_conv_uuid_from_messages(raw_messages)
-        logger.info("[chat] type=%s parsed conv_uuid=%s", type_name, conv_uuid)
+        forced_account_selector = (req.web2api_account or "").strip() or None
+        logger.info(
+            "[chat] type=%s parsed conv_uuid=%s web2api_account=%s",
+            type_name,
+            conv_uuid,
+            forced_account_selector,
+        )
 
         has_tools = bool(req.tools)
         tagged_prompt_prefix = (
@@ -714,22 +1017,49 @@ class ChatHandler:
         )
 
         max_retries = 3
+        session_busy_waited = 0.0
         for attempt in range(max_retries):
             target: _RequestTarget | None = None
             active_session_id: str | None = None
             request_id = uuid.uuid4().hex
+            stream_started = False
             try:
-                async with self._schedule_lock:
-                    if conv_uuid:
-                        target = await self._reuse_session_target_locked(
-                            plugin,
+                while target is None:
+                    wait_seconds: float | None = None
+                    async with self._schedule_lock:
+                        if conv_uuid:
+                            target = await self._reuse_session_target_locked(
+                                plugin,
+                                type_name,
+                                conv_uuid,
+                                forced_account_selector=forced_account_selector,
+                            )
+                        if target is None:
+                            try:
+                                target = await self._allocate_new_target_locked(
+                                    type_name,
+                                    forced_account_selector=forced_account_selector,
+                                )
+                            except _AccountCooldownWait as e:
+                                wait_seconds = e.wait_seconds
+                            except _SessionBusyWait as e:
+                                wait_seconds = e.wait_seconds
+                        if target is not None and target.session_id is not None:
+                            active_session_id = target.session_id
+                    if target is None:
+                        if wait_seconds is None:
+                            raise RuntimeError("未能分配请求资源")
+                        if conv_uuid and session_busy_waited + wait_seconds > self._session_busy_max_wait_seconds:
+                            raise RuntimeError("当前会话正在处理中，请稍后再试")
+                        logger.info(
+                            "[chat] waiting resource type=%s conv_uuid=%s wait=%.2fs",
                             type_name,
                             conv_uuid,
+                            wait_seconds,
                         )
-                    if target is None:
-                        target = await self._allocate_new_target_locked(type_name)
-                    if target.session_id is not None:
-                        active_session_id = target.session_id
+                        if conv_uuid:
+                            session_busy_waited += wait_seconds
+                        await asyncio.sleep(wait_seconds)
 
                 content = extract_user_content(
                     req.messages,
@@ -768,12 +1098,15 @@ class ChatHandler:
                     session_id = await plugin.create_conversation(
                         target.context,
                         target.page,
+                        proxy_url=target.proxy_key.proxy_host
+                        if target.proxy_key.use_proxy
+                        else "",
                         timezone=target.group.timezone
                         or getattr(target.proxy_key, "timezone", None)
                         or TIMEZONE,
                     )
                     if not session_id:
-                        raise RuntimeError("插件创建会话失败")
+                        raise _RetryableUpstreamError("插件创建会话失败")
                     async with self._schedule_lock:
                         account_id = self._pool.account_id(target.group, target.account)
                         self._session_cache.put(
@@ -787,7 +1120,8 @@ class ChatHandler:
                             type_name,
                             session_id,
                         )
-                        self._busy_sessions.add(session_id)
+                        self._busy_sessions[session_id] = _BusySessionState()
+                        logger.info("[chat] acquire busy session_id=%s mode=create", session_id)
                 active_session_id = session_id
 
                 logger.info(
@@ -818,10 +1152,68 @@ class ChatHandler:
                         attachments=attachments,
                     ),
                 )
+                first_stream_chunk_timeout = max(
+                    1.0,
+                    get_float("scheduler", "stream_prepare_timeout_seconds", 30.0),
+                )
+                try:
+                    first_chunk = await asyncio.wait_for(
+                        stream.__anext__(),
+                        timeout=first_stream_chunk_timeout,
+                    )
+                except StopAsyncIteration:
+                    first_chunk = None
+                except asyncio.TimeoutError as exc:
+                    raise _RetryableUpstreamError(
+                        f"续写准备阶段超时({first_stream_chunk_timeout:.0f}s)"
+                    ) from exc
+                if first_chunk is not None:
+                    stream_started = True
+                    yield first_chunk
                 async for chunk in stream:
+                    stream_started = True
                     yield chunk
                 yield session_id_suffix(session_id)
                 return
+            except _RetryableUpstreamError as e:
+                if stream_started:
+                    logger.warning(
+                        "上游临时异常发生在首包后，直接报错不重试: type=%s proxy=%s err=%s",
+                        type_name,
+                        target.proxy_key.fingerprint_id if target else None,
+                        e,
+                    )
+                    async with self._schedule_lock:
+                        if target is not None and active_session_id is not None:
+                            entry = self._session_cache.get(active_session_id)
+                            if entry is not None:
+                                self._invalidate_session_locked(active_session_id, entry)
+                            self._browser_manager.mark_tab_draining(
+                                target.proxy_key,
+                                type_name,
+                            )
+                    raise RuntimeError(f"流式响应中断: {e}") from e
+                logger.warning(
+                    "上游临时异常，切换资源重试: type=%s proxy=%s err=%s",
+                    type_name,
+                    target.proxy_key.fingerprint_id if target else None,
+                    e,
+                )
+                async with self._schedule_lock:
+                    if target is not None:
+                        self._browser_manager.mark_tab_draining(
+                            target.proxy_key,
+                            type_name,
+                        )
+                        self._invalidate_tab_sessions_locked(
+                            target.proxy_key, type_name
+                        )
+                if attempt == max_retries - 1:
+                    raise RuntimeError(
+                        f"已重试 {max_retries} 次仍遇到上游临时异常，请稍后再试: {e}"
+                    ) from e
+                continue
+
             except AccountFrozenError as e:
                 logger.warning(
                     "账号限流/额度用尽（插件上报），切换资源重试: type=%s proxy=%s err=%s",
@@ -849,11 +1241,57 @@ class ChatHandler:
                         f"已重试 {max_retries} 次仍限流/过载，请稍后再试: {e}"
                     ) from e
                 continue
+            except Exception as e:
+                if not _is_transient_browser_error(e):
+                    raise
+                if stream_started:
+                    logger.warning(
+                        "浏览器/页面异常发生在首包后，直接报错不重试: type=%s proxy=%s err=%s",
+                        type_name,
+                        target.proxy_key.fingerprint_id if target else None,
+                        e,
+                    )
+                    async with self._schedule_lock:
+                        if target is not None and active_session_id is not None:
+                            entry = self._session_cache.get(active_session_id)
+                            if entry is not None:
+                                self._invalidate_session_locked(active_session_id, entry)
+                            self._browser_manager.mark_tab_draining(
+                                target.proxy_key,
+                                type_name,
+                            )
+                    raise RuntimeError(f"流式响应中断: {e}") from e
+                logger.warning(
+                    "浏览器/页面临时异常，切换资源重试: type=%s proxy=%s err=%s",
+                    type_name,
+                    target.proxy_key.fingerprint_id if target else None,
+                    e,
+                )
+                async with self._schedule_lock:
+                    if target is not None:
+                        self._browser_manager.mark_tab_draining(
+                            target.proxy_key,
+                            type_name,
+                        )
+                        self._invalidate_tab_sessions_locked(
+                            target.proxy_key, type_name
+                        )
+                if attempt == max_retries - 1:
+                    raise RuntimeError(
+                        f"已重试 {max_retries} 次仍遇到浏览器/页面异常，请稍后再试: {e}"
+                    ) from e
+                continue
             finally:
                 if target is not None:
                     async with self._schedule_lock:
                         if active_session_id is not None:
-                            self._busy_sessions.discard(active_session_id)
+                            state = self._busy_sessions.pop(active_session_id, None)
+                            age = time.time() - state.started_at if state is not None else -1.0
+                            logger.info(
+                                "[chat] release busy session_id=%s age=%.2fs",
+                                active_session_id,
+                                age,
+                            )
                         self._browser_manager.release_tab(target.proxy_key, type_name)
                         await self._reconcile_tabs_locked()
 
